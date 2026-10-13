@@ -104,6 +104,9 @@ export type Series = {
   category_override: string | null;
   seasons: Season[];
   rule_count: number;
+  anilist_id: number | null;
+  cover_url: string | null;
+  anilist: AnilistInfo | null;
   created_at: string;
 };
 
@@ -115,6 +118,9 @@ export type SeriesIn = {
   path_override?: string | null;
   category_override?: string | null;
   seasons?: SeasonIn[]; // seasons only honored on POST
+  anilist_id?: number | null;
+  cover_url?: string | null;
+  anilist?: AnilistInfo | null;
 };
 
 export type Rule = {
@@ -333,3 +339,61 @@ export type TestRecentResult = SimulationResult & { entry_id: number };
 export type RegexValidation = { valid: boolean; error: string | null };
 
 export type Health = { status: 'ok'; db: 'ok'; scheduler: 'running' | 'stopped'; version: string };
+
+// ---- AniList (.claude/rules/anilist.md) ----
+
+export type AnilistFormat = 'TV' | 'TV_SHORT' | 'MOVIE' | 'SPECIAL' | 'OVA' | 'ONA' | 'MUSIC';
+export type AnilistStatus = 'FINISHED' | 'RELEASING' | 'NOT_YET_RELEASED' | 'CANCELLED' | 'HIATUS';
+
+/** Stored on the series as `anilist` (backend column `anilist_json`). */
+export type AnilistInfo = {
+  title_romaji: string | null;
+  title_english: string | null;
+  title_native: string | null;
+  format: string | null;
+  status: string | null;
+  season_year: number | null;
+  episodes: number | null;
+  site_url: string | null;
+};
+
+export type AnilistMedia = {
+  id: number;
+  title_romaji: string | null;
+  title_english: string | null;
+  title_native: string | null;
+  synonyms: string[];
+  format: string | null;
+  status: string | null;
+  season: string | null;
+  season_year: number | null;
+  episodes: number | null;
+  cover_medium: string | null;
+  cover_large: string | null;
+  site_url: string | null;
+};
+
+export type AnilistRelated = {
+  relation_type: string;
+  id: number;
+  title_romaji: string | null;
+  title_english: string | null;
+  format: string | null;
+  episodes: number | null;
+  season_year: number | null;
+  status: string | null;
+  suggested_season_number: number | null;
+};
+
+export type AnilistMediaDetail = AnilistMedia & { related: AnilistRelated[] };
+
+export type AnilistSuggestion = {
+  name: string;
+  aliases: string[];
+  cover_url: string | null;
+  anilist: AnilistInfo;
+  seasons: SeasonIn[];
+  related: AnilistRelated[];
+};
+
+export type LinkAnilistIn = { anilist_id: number | null };

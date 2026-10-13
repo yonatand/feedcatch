@@ -232,6 +232,34 @@ class EvaluationOut(_Out):
 # ---------------------------------------------------------------- seasons / series
 
 
+def _http_url(v: str | None) -> str | None:
+    """Optional absolute http(s) URL (cover / AniList links rendered by the UI); blank -> None."""
+    if v is None or v.strip() == "":
+        return None
+    v = v.strip()
+    if len(v) > 2048 or not re.match(r"^https?://[^\s/]+", v, re.IGNORECASE) or any(ord(c) < 0x20 for c in v):
+        raise ValueError("must be an absolute http(s) URL")
+    return v
+
+
+class AnilistInfo(BaseModel):
+    """Stored on `series.anilist_json`; see `.claude/rules/anilist.md`."""
+
+    title_romaji: str | None = None
+    title_english: str | None = None
+    title_native: str | None = None
+    format: str | None = None
+    status: str | None = None
+    season_year: int | None = None
+    episodes: int | None = None
+    site_url: str | None = None
+
+    @field_validator("site_url")
+    @classmethod
+    def _site(cls, v: str | None) -> str | None:
+        return _http_url(v)
+
+
 class SeasonIn(BaseModel):
     season_number: int = Field(ge=0, le=9999)
     monitored: bool = True
@@ -304,6 +332,14 @@ class SeriesIn(BaseModel):
     path_override: str | None = None
     category_override: str | None = None
     seasons: list[SeasonIn] | None = None
+    anilist_id: int | None = Field(default=None, ge=1)
+    cover_url: str | None = None
+    anilist: AnilistInfo | None = None
+
+    @field_validator("cover_url")
+    @classmethod
+    def _cover(cls, v: str | None) -> str | None:
+        return _http_url(v)
 
     @field_validator("name")
     @classmethod
@@ -365,6 +401,9 @@ class SeriesOut(_Out):
     category_override: str | None
     seasons: list[SeasonOut]
     rule_count: int
+    anilist_id: int | None = None
+    cover_url: str | None = None
+    anilist: AnilistInfo | None = None
     created_at: UTCDatetime
 
     @classmethod
@@ -379,6 +418,9 @@ class SeriesOut(_Out):
             category_override=series.category_override,
             seasons=[SeasonOut.from_model(s, media_base) for s in series.seasons],
             rule_count=len(series.rules) if rule_count is None else rule_count,
+            anilist_id=series.anilist_id,
+            cover_url=series.cover_url,
+            anilist=AnilistInfo.model_validate(series.anilist) if series.anilist else None,
             created_at=series.created_at,
         )
 
@@ -399,6 +441,55 @@ class PreviewPathIn(BaseModel):
 
 class PreviewPathOut(BaseModel):
     save_path: str
+
+
+# ---------------------------------------------------------------- AniList
+
+
+class AnilistMediaOut(_Out):
+    id: int
+    title_romaji: str | None
+    title_english: str | None
+    title_native: str | None
+    synonyms: list[str]
+    format: str | None
+    status: str | None
+    season: str | None
+    season_year: int | None
+    episodes: int | None
+    cover_medium: str | None
+    cover_large: str | None
+    site_url: str | None
+
+
+class AnilistRelatedOut(_Out):
+    relation_type: str
+    id: int
+    title_romaji: str | None
+    title_english: str | None
+    format: str | None
+    episodes: int | None
+    season_year: int | None
+    status: str | None
+    suggested_season_number: int | None
+
+
+class AnilistMediaDetailOut(AnilistMediaOut):
+    related: list[AnilistRelatedOut]
+
+
+class AnilistSuggestionOut(_Out):
+    anilist_id: int
+    name: str
+    aliases: list[str]
+    cover_url: str | None
+    anilist: AnilistInfo
+    seasons: list[SeasonIn]
+    related: list[AnilistRelatedOut]
+
+
+class LinkAnilistIn(BaseModel):
+    anilist_id: int | None = Field(default=None, ge=1)
 
 
 # ---------------------------------------------------------------- rules

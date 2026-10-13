@@ -5,6 +5,7 @@ import {
   useDeleteRule,
   useDeleteSeason,
   useDeleteSeries,
+  useLinkAnilist,
   useRules,
   useSaveRule,
   useSeries,
@@ -13,8 +14,10 @@ import {
   useUpdateSeason,
   useUpdateSeries,
 } from '../api/hooks';
-import type { Rule, SeasonIn, Series, SeriesIn } from '../api/types';
+import type { AnilistMedia, Rule, SeasonIn, Series, SeriesIn } from '../api/types';
+import { AnilistSearch } from '../components/AnilistSearch';
 import { ConfirmInline } from '../components/ConfirmInline';
+import { Cover } from '../components/Cover';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { CheckField, FormField } from '../components/FormField';
 import { ListInput } from '../components/ListInput';
@@ -24,6 +27,7 @@ import { SimulationTable } from '../components/SimulationTable';
 import { LoadingBlock, Spinner } from '../components/Spinner';
 import { Badge, StatusBadge } from '../components/StatusBadge';
 import { Card, EmptyRow, PageHeader, TableWrap } from '../components/Table';
+import { anilistStatus, anilistSubtitle, anilistTitle, metaLine, safeUrl } from '../lib/anilist';
 import { emptySeason, rangeText, seasonToIn, seriesToIn, sortSeasons } from '../lib/series';
 
 function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) {
@@ -42,6 +46,9 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
               name: v.name.trim(),
               path_override: v.path_override?.trim() ? v.path_override.trim() : null,
               category_override: v.category_override?.trim() ? v.category_override.trim() : null,
+              anilist_id: series.anilist_id,
+              cover_url: series.cover_url,
+              anilist: series.anilist,
             },
           },
           { onSuccess: onDone },
@@ -93,6 +100,91 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
         </button>
       </div>
     </form>
+  );
+}
+
+function AnilistCard({ series }: { series: Series }) {
+  const link = useLinkAnilist(series.id);
+  const [searching, setSearching] = useState(false);
+  const info = series.anilist;
+  const linked = series.anilist_id !== null;
+  const href = safeUrl(info?.site_url);
+  const pick = (m: AnilistMedia) => {
+    link.mutate(m.id, {
+      onSuccess: () => setSearching(false),
+    });
+  };
+  return (
+    <Card
+      title="AniList"
+      actions={
+        <>
+          {searching ? (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSearching(false)}>
+              Cancel
+            </button>
+          ) : (
+            <button type="button" className="btn btn-sm" disabled={link.isPending} onClick={() => { link.reset(); setSearching(true); }}>
+              {linked ? 'Change link' : 'Link to AniList'}
+            </button>
+          )}
+          {linked && !searching ? (
+            <ConfirmInline
+              label="Unlink"
+              confirmLabel="Unlink"
+              message="Clears the cover and AniList info. Aliases are kept."
+              pending={link.isPending && link.variables === null}
+              onConfirm={() => link.mutate(null)}
+            />
+          ) : null}
+        </>
+      }
+    >
+      <ErrorBanner error={link.error} title={linked ? 'AniList update failed' : 'Could not link'} onDismiss={() => link.reset()} />
+      {linked ? (
+        <div className="anilist-linked">
+          <Cover url={series.cover_url} alt={series.name} size="lg" />
+          <div className="anilist-row-main">
+            {info ? (
+              <>
+                <div>
+                  <strong>{anilistTitle(info)}</strong>
+                </div>
+                {anilistSubtitle(info) ? <div className="small muted">{anilistSubtitle(info)}</div> : null}
+                {info.title_native ? <div className="small muted">{info.title_native}</div> : null}
+                <div className="small">
+                  <span className="muted">{metaLine(info)}</span> <Badge tone={anilistStatus(info.status).tone}>{anilistStatus(info.status).label}</Badge>
+                </div>
+              </>
+            ) : (
+              <div className="small muted">AniList id {series.anilist_id}</div>
+            )}
+            {href ? (
+              <div className="small">
+                <a href={href} target="_blank" rel="noopener noreferrer">
+                  View on AniList
+                </a>
+              </div>
+            ) : null}
+            <p className="small muted">Metadata only: matching uses the series name and aliases, never AniList directly.</p>
+          </div>
+        </div>
+      ) : !searching ? (
+        <p className="small muted">Not linked. Link it to show a cover and pull extra title aliases from AniList (existing aliases are kept).</p>
+      ) : null}
+      {searching ? (
+        <div className="subcard">
+          <AnilistSearch
+            onPick={pick}
+            pendingId={link.isPending && typeof link.variables === 'number' ? link.variables : null}
+            selectedId={series.anilist_id}
+            pickLabel="Link"
+            initialQuery={series.name}
+            autoFocus
+          />
+        </div>
+      ) : null}
+    </Card>
   );
 }
 
@@ -460,6 +552,7 @@ export default function SeriesDetail() {
           <SeriesForm series={s} onDone={() => setEditing(false)} />
         </Card>
       ) : null}
+      <AnilistCard series={s} />
       <SeasonsCard series={s} />
       <RulesCard series={s} />
       <PathsCard seriesId={s.id} />

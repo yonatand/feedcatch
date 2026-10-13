@@ -17,7 +17,7 @@
   step 3 rule (group, prefix check, resolution, keywords, regex optional) with "Test against recent releases" using `/api/rules/simulate` against titles from `/api/entries` or feed preview,
   step 4 review: monitored toggle (default off), create series + season(s) + rule.
 - Accessibility basics: labels on inputs, buttons not divs, focus styles kept.
-- Performance: no barrel re-exports of all pages; avoid rendering > 200 rows (paginate); `npm run build` must report the entry chunk under 120 KB gzip. Add `npm run typecheck` (`tsc --noEmit`).
+- Performance: no barrel re-exports of all pages; avoid rendering > 200 rows (paginate); `bun run build` must report the entry chunk under 120 KB gzip. `bun run typecheck` = `tsc --noEmit`. Package manager is **Bun** (`bun.lock`; never commit `package-lock.json`).
 
 ## Learned the hard way (2026-10-13)
 - Never nest a `<form>` inside another form (SimulateBox inside RuleForm). Use a `div` and `type="button"`; handle Enter with `preventDefault()`.

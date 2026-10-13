@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from app import __version__
-from app.api import activity, auth, dashboard, downloads, entries, feeds, health, qbit, rules, series, settings
+from app.api import activity, anilist, auth, dashboard, downloads, entries, feeds, health, qbit, rules, series, settings
 from app.config import get_settings
 from app.db import SessionLocal, configure_engine, run_migrations
 from app.logging_setup import configure_logging
@@ -45,6 +45,8 @@ _400_FIELDS = {
     "media_base_path",
     "url",
     "name",
+    "cover_url",
+    "site_url",
 }
 
 
@@ -167,7 +169,20 @@ def create_app() -> FastAPI:
     app.state.login_limiter = LoginRateLimiter()
     _register_handlers(app)
     _register_middleware(app)
-    for module in (auth, dashboard, feeds, series, rules, entries, downloads, qbit, settings, activity, health):
+    for module in (
+        auth,
+        dashboard,
+        feeds,
+        series,
+        rules,
+        entries,
+        downloads,
+        qbit,
+        settings,
+        activity,
+        health,
+        anilist,
+    ):
         app.include_router(module.router)
     _register_spa(app)
     return app

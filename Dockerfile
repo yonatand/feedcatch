@@ -4,14 +4,15 @@
 #   stage "runtime": Python + FastAPI, serving /api, /healthz and the built SPA
 
 ############################ ui ############################
-FROM node:22-alpine AS ui
+# --platform=$BUILDPLATFORM: the SPA build output is identical on every arch, so skip QEMU emulation for it.
+FROM --platform=$BUILDPLATFORM oven/bun:1-alpine AS ui
 # vite.config.ts uses build.outDir = ../backend/app/static, so mirror the repo layout.
 WORKDIR /app/frontend
 RUN mkdir -p /app/backend/app/static
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
 COPY frontend/ ./
-RUN npm run build
+RUN bun run build
 
 ######################### runtime ##########################
 FROM python:3.12-slim AS runtime

@@ -8,6 +8,10 @@ export function seriesToIn(s: Series): SeriesIn {
     season_folder_format: s.season_folder_format,
     path_override: s.path_override,
     category_override: s.category_override,
+    // Round-trip the AniList link so a PUT (monitor toggle, edit) never clears it.
+    anilist_id: s.anilist_id,
+    cover_url: s.cover_url,
+    anilist: s.anilist,
   };
 }
 

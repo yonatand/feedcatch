@@ -1,7 +1,7 @@
 # Verification (nothing is "done" until these pass locally)
 
 Backend (`cd backend`): `uv sync --all-extras`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy app`, `uv run pytest -q`.
-Frontend (`cd frontend`): `npm ci`, `npm run typecheck`, `npm run build` (check reported gzip sizes).
+Frontend (`cd frontend`): `bun install --frozen-lockfile`, `bun run typecheck`, `bun run build` (check reported gzip sizes).
 Docker: `docker build -t feedcatch .` and `docker compose config` must succeed. `docker run --rm -p 8000:8000 -e APP_AUTH_DISABLED=true feedcatch` then `curl localhost:8000/healthz`.
 
 Required test coverage (pytest):

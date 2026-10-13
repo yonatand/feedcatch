@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useDeleteSeries, useSeriesList, useUpdateSeries } from '../api/hooks';
 import { ConfirmInline } from '../components/ConfirmInline';
+import { Cover } from '../components/Cover';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { LoadingBlock } from '../components/Spinner';
 import { Badge, StatusBadge } from '../components/StatusBadge';
@@ -33,6 +34,9 @@ export default function SeriesList() {
           <table className="table">
             <thead>
               <tr>
+                <th className="cover-col">
+                  <span className="sr-only">Cover</span>
+                </th>
                 <th>Name</th>
                 <th>Monitored</th>
                 <th>Seasons</th>
@@ -42,12 +46,15 @@ export default function SeriesList() {
             </thead>
             <tbody>
               {items.length === 0 ? (
-                <EmptyRow colSpan={5}>
+                <EmptyRow colSpan={6}>
                   No series yet. <Link to="/series/new">Create one with the wizard</Link>.
                 </EmptyRow>
               ) : null}
               {items.map((s) => (
                 <tr key={s.id}>
+                  <td className="cover-col">
+                    <Cover url={s.cover_url} alt={s.name} size="sm" />
+                  </td>
                   <td className="title-cell">
                     <Link to={`/series/${s.id}`}>
                       <strong>{s.name}</strong>

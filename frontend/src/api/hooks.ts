@@ -2,6 +2,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { api } from './client';
 import type {
   ActivityEvent,
+  AnilistMedia,
+  AnilistSuggestion,
   AppSettings,
   AppSettingsIn,
   AuthStatus,
@@ -52,6 +54,8 @@ export const qk = {
   qbit: ['qbit'] as const,
   settings: ['settings'] as const,
   activity: (f: ActivityFilters) => ['activity', f] as const,
+  anilistSearch: (q: string) => ['anilist', 'search', q] as const,
+  anilistSuggest: (id: number) => ['anilist', 'suggest', id] as const,
 };
 
 // ---------------- Auth ----------------
@@ -460,5 +464,46 @@ export function useActivity(f: ActivityFilters) {
     queryKey: qk.activity(f),
     queryFn: () => api<ListResponse<ActivityEvent>>('/api/activity', { query: f }),
     placeholderData: keepPreviousData,
+  });
+}
+
+// ---------------- AniList ----------------
+
+/** Server-cached too; a long staleTime keeps repeated keystrokes off the 30/min AniList budget. */
+export function useAnilistSearch(q: string, enabled: boolean) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: qk.anilistSearch(query),
+    queryFn: () => api<ItemsResponse<AnilistMedia>>('/api/anilist/search', { query: { q: query, limit: 10 } }),
+    enabled: enabled && query.length >= 2,
+    staleTime: 10 * 60_000,
+    retry: false,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useAnilistSuggest(id: number | null) {
+  return useQuery({
+    queryKey: qk.anilistSuggest(id ?? 0),
+    queryFn: () => api<AnilistSuggestion>(`/api/anilist/${id ?? 0}/suggest`),
+    enabled: id !== null,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
+export function fetchAnilistSuggest(id: number) {
+  return api<AnilistSuggestion>(`/api/anilist/${id}/suggest`);
+}
+
+export function useLinkAnilist(seriesId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (anilistId: number | null) =>
+      api<Series>(`/api/series/${seriesId}/anilist`, { method: 'PUT', body: { anilist_id: anilistId } }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.seriesOne(data.id), data);
+      invalidateSeries(qc);
+    },
   });
 }

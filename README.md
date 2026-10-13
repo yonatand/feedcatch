@@ -1,5 +1,8 @@
 # feedcatch
 
+[![CI](https://github.com/yonatand/feedcatch/actions/workflows/ci.yml/badge.svg)](https://github.com/yonatand/feedcatch/actions/workflows/ci.yml)
+[![Docker](https://github.com/yonatand/feedcatch/actions/workflows/docker.yml/badge.svg)](https://github.com/yonatand/feedcatch/actions/workflows/docker.yml)
+
 **Catch new anime releases from RSS and hand them to qBittorrent with the right season folder.**
 
 feedcatch is a small self-hosted service that polls an RSS feed (AnimeTosho by default), matches every new release
@@ -30,6 +33,8 @@ It replaces Sonarr, autobrr and FlexGet for this one job and depends on none of 
 - Parses release titles (`S02E01`, `Season 2 - 01`, `- 171`, `[DKB] ...`) and evaluates per-series and per-season rules:
   release group, keywords, resolution, source, codec, language, size and an optional Python regex.
 - Shows why each release was accepted or rejected, condition by condition.
+- Searches **AniList** when you add a series: pick a result and the name, aliases, cover and season count are prefilled;
+  sequels show up as "Add as season". AniList is metadata only; matching still uses your rules. Covers load from AniList's CDN in your browser.
 - Sends torrents with `POST /api/v2/torrents/add` using `savepath=<computed path>`, `autoTMM=false`, an optional category
   and the tag `feedcatch`. It then reads the torrent back from qBittorrent and checks that the save path matches.
 - Allows one accepted download per episode by default, with deduplication by episode and by infohash.
@@ -65,6 +70,82 @@ The container runs as a non-root user, uid:gid `1000:1000` by default, and needs
 If your host user has a different id, set `PUID` and `PGID` in `.env` to the output of `id -u` and `id -g`.
 You can also run `sudo chown -R 1000:1000 ./data`. If the directory isn't writable, the container exits at startup with a
 message that explains the fix.
+
+## Run from the published image (no build)
+
+A prebuilt image is published to GitHub Container Registry for **linux/amd64** and **linux/arm64**
+(for example a Raspberry Pi 4/5 with a 64-bit OS):
+
+| Tag | Points to |
+|---|---|
+| `ghcr.io/yonatand/feedcatch:latest` | the latest build of `main` |
+| `ghcr.io/yonatand/feedcatch:sha-<short>` | one specific commit, for pinning |
+| `ghcr.io/yonatand/feedcatch:X.Y.Z` (and `X.Y`) | a release tagged `vX.Y.Z` |
+
+You don't need to clone the repository. In an empty directory, save this as `docker-compose.yml`:
+
+```yaml
+services:
+  feedcatch:
+    image: ghcr.io/yonatand/feedcatch:latest
+    container_name: feedcatch
+    restart: unless-stopped
+    # Run as the owner of ./data on the host (default 1000:1000).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      # Optional so the stack still starts with built-in defaults; normally: cp .env.example .env
+      - path: .env
+        required: false
+    environment:
+      # Fixed inside the container; change the published port with APP_PORT in .env.
+      APP_DATA_DIR: /data
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+    extra_hosts:
+      # Lets the container reach a qBittorrent-nox running on the Docker host (Linux).
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # App state only: SQLite DB (app.db) and secret.key.
+      # The media directory is deliberately NOT mounted. The app never reads or writes media;
+      # it only hands save-path strings (e.g. /home/qbittorrent-nox/media/Black Clover/Season 02)
+      # to qBittorrent, which owns all file writes.
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    # Lets the scheduler finish an in-flight poll/submission on SIGTERM.
+    stop_grace_period: 20s
+```
+
+Then:
+
+```bash
+mkdir -p data                 # app state: SQLite DB + secret.key (see permissions above)
+docker compose up -d
+```
+
+`.env` is optional. To configure the app, create it next to the compose file with the variables from
+[`.env.example`](.env.example) (see [Configuration](#configuration-env)).
+
+If you cloned the repository, the same file is included as `docker-compose.ghcr.yml`:
+
+```bash
+cp .env.example .env && mkdir -p data
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+To upgrade, pull the new image and recreate the container: `docker compose pull && docker compose up -d`
+(add `-f docker-compose.ghcr.yml` if you use that file).
+
+The package is published by GitHub Actions on every push to `main`; if a pull is denied, the package may still be
+private in GitHub Packages settings. Packages created by a workflow start out private. The repository owner can make it
+public once: on GitHub, open the repository > **Packages** > **feedcatch** > **Package settings** > **Change visibility** >
+**Public**.
 
 ## First-run setup
 
@@ -144,6 +225,10 @@ Feed URLs are checked against SSRF: only `http` and `https` are allowed, every r
 redirect is checked again (at most 5). To allow a feed on your LAN, turn on **Allow private / LAN feed hosts** in Settings.
 
 ## Walkthrough: follow Black Clover Season 2 by DKB
+
+The fastest way is **Series > New**, type `Black Clover` in the AniList box and click **Use**: the name, cover and the 170-episode
+first season are prefilled, and the related "Black Clover 2nd Season" entry can be added as season 2 with one click.
+The manual steps below show what every field means.
 
 The demo data already contains this setup. To create it yourself, use **Series > New** (the wizard previews the save path and lets you test the rule against recent releases before anything is saved):
 
@@ -259,13 +344,13 @@ uv run mypy app
 uv run pytest -q
 ```
 
-Frontend (Node 22):
+Frontend ([Bun](https://bun.sh) 1.x):
 
 ```bash
 cd frontend
-npm ci
-npm run typecheck
-npm run build        # writes the SPA into backend/app/static
+bun install --frozen-lockfile
+bun run typecheck
+bun run build        # writes the SPA into backend/app/static
 ```
 
 Docker:
@@ -296,9 +381,18 @@ have to enter it again.
 
 ## Upgrading
 
+If you build from source:
+
 ```bash
 git pull
 docker compose up -d --build
+```
+
+If you run the published image (pin a `sha-*` or `X.Y.Z` tag instead of `latest` to control when you upgrade):
+
+```bash
+docker compose pull           # add -f docker-compose.ghcr.yml if you use that file
+docker compose up -d
 ```
 
 Database migrations run automatically at startup. Back up `./data` before upgrading.
@@ -316,3 +410,7 @@ Working MVP. Verified end to end against the live AnimeTosho feed and qBittorren
 manual and automatic grabs, and the exact save path showing up in qBittorrent. Automatic quality upgrades and
 Postgres are not implemented. Issues and pull requests are welcome.
 
+
+## License
+
+MIT, see [LICENSE](LICENSE).

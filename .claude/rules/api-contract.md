@@ -159,3 +159,6 @@ Health
 - Grab preview (`confirm:false`) returns 200 with `duplicate_of` set when a duplicate exists; only `confirm:true` without `force` returns 409.
 - Feed test response: `{ok, feed_title: string|null, entry_count, sample, error: string|null}`.
 - `POST /api/auth/setup` does not set a cookie; the UI logs in afterwards.
+
+## AniList (added 2026-10-13)
+See `.claude/rules/anilist.md` for the AniList endpoints (`/api/anilist/search`, `/api/anilist/{id}`, `/api/anilist/{id}/suggest`, `PUT /api/series/{id}/anilist`) and the new `anilist_id` / `cover_url` / `anilist` fields on `Series` and `SeriesIn`.

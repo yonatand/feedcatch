@@ -789,3 +789,73 @@ pre.json {
   padding: 16px;
 }
 .auth-card { width: min(400px, 100%); padding: 22px; }
+
+/* ---------- AniList ---------- */
+.cover {
+  display: block;
+  flex: none;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.cover-xs { width: 40px; height: 56px; }
+.cover-sm { width: 48px; height: 68px; }
+.cover-lg { width: 120px; height: 170px; }
+.cover-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-weight: 650;
+  font-size: 1.15rem;
+  user-select: none;
+}
+.cover-lg.cover-placeholder { font-size: 2.4rem; }
+.table th.cover-col,
+.table td.cover-col { width: 64px; padding-right: 4px; }
+
+.anilist-pick { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.anilist-search input[type='search'] { width: 100%; }
+.anilist-status { min-height: 1.4em; margin: 4px 0; }
+.anilist-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 440px;
+  overflow-y: auto;
+}
+.anilist-row,
+.related-row,
+.anilist-selected,
+.anilist-linked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.anilist-row { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.anilist-row:last-child { border-bottom: 0; }
+.anilist-row.selected { background: var(--info-bg); }
+.anilist-row > .btn,
+.related-row > .btn { flex: none; white-space: nowrap; }
+.anilist-row-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.anilist-row-meta { margin-top: 2px; }
+.anilist-selected {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--info-bg);
+}
+.anilist-linked { align-items: flex-start; gap: 14px; }
+.anilist-linked .anilist-row-main > * + * { margin-top: 4px; }
+.related-list { list-style: none; margin: 0; padding: 0; }
+.related-row { padding: 6px 0; border-top: 1px solid var(--border); }
+.review-head { display: flex; gap: 16px; align-items: flex-start; }
+@media (max-width: 600px) {
+  .review-head,
+  .anilist-linked { flex-direction: column; }
+  .cover-lg { width: 96px; height: 136px; }
+}

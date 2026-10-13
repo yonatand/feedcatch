@@ -125,6 +125,7 @@ class FeedEntry(Base):
 
 class Series(Base):
     __tablename__ = "series"
+    __table_args__ = (Index("ux_series_anilist_id", "anilist_id", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
@@ -135,6 +136,10 @@ class Series(Base):
     season_folder_format: Mapped[str] = mapped_column(String(255), nullable=False, default=DEFAULT_SEASON_FOLDER_FORMAT)
     path_override: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     category_override: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # AniList metadata (migration 0002); see .claude/rules/anilist.md
+    anilist_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    anilist: Mapped[dict[str, Any] | None] = mapped_column("anilist_json", JSON, nullable=True)
 
     seasons: Mapped[list[Season]] = relationship(
         back_populates="series",

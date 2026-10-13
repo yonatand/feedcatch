@@ -6,10 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from app.api.anilist import anilist_http_error, get_client
 from app.api.deps import AUTH, Page, Session, count, get_db, get_or_404, page_params
 from app.models import Rule, Season, Series
 from app.schemas import (
     ItemsOut,
+    LinkAnilistIn,
     Paginated,
     PreviewPathIn,
     PreviewPathOut,
@@ -20,6 +22,7 @@ from app.schemas import (
     SeriesOut,
 )
 from app.services import activity, paths, settings_store
+from app.services.anilist import AnilistError, build_suggestion
 
 router = APIRouter(tags=["series"], dependencies=AUTH)
 
@@ -41,6 +44,28 @@ def _name_conflict(db: Session, name: str, exclude_id: int | None = None) -> Non
         stmt = stmt.where(Series.id != exclude_id)
     if db.scalar(stmt) is not None:
         raise HTTPException(status_code=409, detail=f"a series named '{name}' already exists")
+
+
+def _anilist_conflict(db: Session, anilist_id: int | None, exclude_id: int | None = None) -> None:
+    if anilist_id is None:
+        return
+    stmt = select(Series.id, Series.name).where(Series.anilist_id == anilist_id)
+    if exclude_id is not None:
+        stmt = stmt.where(Series.id != exclude_id)
+    row = db.execute(stmt).first()
+    if row is not None:
+        raise HTTPException(status_code=409, detail=f"AniList id {anilist_id} is already linked to '{row.name}'")
+
+
+def _apply_anilist(series: Series, body: SeriesIn, only_if_set: bool) -> None:
+    """Copy the AniList fields; on update only those the client actually sent (older clients omit them)."""
+    sent = body.model_fields_set
+    if not only_if_set or "anilist_id" in sent:
+        series.anilist_id = body.anilist_id
+    if not only_if_set or "cover_url" in sent:
+        series.cover_url = body.cover_url
+    if not only_if_set or "anilist" in sent:
+        series.anilist = body.anilist.model_dump() if body.anilist is not None else None
 
 
 def _season_conflict(db: Session, series_id: int, number: int, exclude_id: int | None = None) -> None:
@@ -76,6 +101,7 @@ def list_series(page: Page = Depends(page_params), db: Session = Depends(get_db)
 @router.post("/api/series", response_model=SeriesOut, status_code=201)
 def create_series(body: SeriesIn, db: Session = Depends(get_db)) -> SeriesOut:
     _name_conflict(db, body.name)
+    _anilist_conflict(db, body.anilist_id)
     series = Series(
         name=body.name,
         aliases=body.aliases,
@@ -84,6 +110,7 @@ def create_series(body: SeriesIn, db: Session = Depends(get_db)) -> SeriesOut:
         path_override=body.path_override,
         category_override=body.category_override,
     )
+    _apply_anilist(series, body, only_if_set=False)
     db.add(series)
     db.flush()
     for s in body.seasons or []:
@@ -121,14 +148,62 @@ def get_series(series_id: int, db: Session = Depends(get_db)) -> SeriesOut:
 def update_series(series_id: int, body: SeriesIn, db: Session = Depends(get_db)) -> SeriesOut:
     series = get_or_404(db, Series, series_id, "series")
     _name_conflict(db, body.name, exclude_id=series.id)
+    if "anilist_id" in body.model_fields_set:
+        _anilist_conflict(db, body.anilist_id, exclude_id=series.id)
     series.name = body.name
     series.aliases = body.aliases
     series.monitored = body.monitored
     series.season_folder_format = body.season_folder_format
     series.path_override = body.path_override
     series.category_override = body.category_override
+    _apply_anilist(series, body, only_if_set=True)
     activity.log_event(
         db, "info", "series_updated", f"Series '{series.name}' updated", details={"series_id": series.id}
+    )
+    db.commit()
+    return series_out(db, series)
+
+
+@router.put("/api/series/{series_id}/anilist", response_model=SeriesOut)
+def link_anilist(series_id: int, body: LinkAnilistIn, db: Session = Depends(get_db)) -> SeriesOut:
+    """Link (fetch metadata, merge suggested aliases; never renames) or unlink (`anilist_id: null`)."""
+    series = get_or_404(db, Series, series_id, "series")
+    if body.anilist_id is None:
+        series.anilist_id = None
+        series.cover_url = None
+        series.anilist = None
+        activity.log_event(
+            db,
+            "info",
+            "series_anilist_unlinked",
+            f"Series '{series.name}' unlinked from AniList",
+            details={"series_id": series.id},
+        )
+        db.commit()
+        return series_out(db, series)
+
+    _anilist_conflict(db, body.anilist_id, exclude_id=series.id)
+    try:
+        detail = get_client().get(body.anilist_id)
+    except AnilistError as exc:
+        raise anilist_http_error(exc) from exc
+    suggestion = build_suggestion(detail)
+    aliases = list(series.aliases or [])
+    seen = {a.casefold() for a in aliases} | {series.name.casefold()}
+    for alias in [suggestion.name, *suggestion.aliases]:
+        if alias.casefold() not in seen:
+            seen.add(alias.casefold())
+            aliases.append(alias)
+    series.aliases = aliases
+    series.anilist_id = detail.id
+    series.cover_url = suggestion.cover_url
+    series.anilist = suggestion.anilist
+    activity.log_event(
+        db,
+        "info",
+        "series_anilist_linked",
+        f"Series '{series.name}' linked to AniList {detail.id}",
+        details={"series_id": series.id, "anilist_id": detail.id},
     )
     db.commit()
     return series_out(db, series)

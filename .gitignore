@@ -18,5 +18,6 @@ backend/app/static/*
 # env
 .env
 # editors
+package-lock.json
 .vscode/
 .idea/

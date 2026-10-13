@@ -20,17 +20,17 @@ uv run pytest -q                # add -x to stop at first failure, -k name to fi
 ## Frontend
 ```bash
 cd frontend
-npm ci                          # first time / after package change (npm install if lockfile missing)
-npm run typecheck
-npm run build                   # outputs to backend/app/static; note gzip sizes printed by Vite
+bun install --frozen-lockfile   # first time / after package change (`bun install` to update bun.lock)
+bun run typecheck
+bun run build                   # outputs to backend/app/static; note gzip sizes printed by Vite
 ```
 
 ## Local run (two terminals) or one-shot
 ```bash
 cd backend && APP_AUTH_DISABLED=true APP_DATA_DIR=./.data uv run uvicorn app.main:app --port 8000
-cd frontend && npm run dev      # http://localhost:5173, proxies /api -> :8000
+cd frontend && bun run dev      # http://localhost:5173, proxies /api -> :8000
 ```
-After `npm run build`, the backend alone serves the SPA at http://localhost:8000.
+After `bun run build`, the backend alone serves the SPA at http://localhost:8000.
 
 ## Docker
 ```bash
