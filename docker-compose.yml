@@ -1,0 +1,39 @@
+# feedcatch
+#   cp .env.example .env && mkdir -p data && docker compose up -d --build
+#   then open http://<host>:${APP_PORT:-8000}
+services:
+  feedcatch:
+    build: .
+    image: feedcatch:local
+    container_name: feedcatch
+    restart: unless-stopped
+    # Run as the owner of ./data on the host (default 1000:1000).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      # Optional so the stack still starts with built-in defaults; normally: cp .env.example .env
+      - path: .env
+        required: false
+    environment:
+      # Fixed inside the container; change the published port with APP_PORT in .env.
+      APP_DATA_DIR: /data
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+    extra_hosts:
+      # Lets the container reach a qBittorrent-nox running on the Docker host (Linux).
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # App state only: SQLite DB (app.db) and secret.key.
+      # The media directory is deliberately NOT mounted. The app never reads or writes media;
+      # it only hands save-path strings (e.g. /home/qbittorrent-nox/media/Black Clover/Season 02)
+      # to qBittorrent, which owns all file writes.
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    # Lets the scheduler finish an in-flight poll/submission on SIGTERM.
+    stop_grace_period: 20s

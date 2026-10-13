@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom Releases</title>
+  <id>urn:example:atom</id>
+  <updated>2026-10-13T12:00:00Z</updated>
+  <entry>
+    <title>[DKB] Black Clover Season 2 - 03 [1080p][HEVC x265 10bit]</title>
+    <id>urn:example:entry:3</id>
+    <updated>2026-10-13T12:00:00Z</updated>
+    <link rel="alternate" href="https://atom.example.test/view/3"/>
+    <link rel="enclosure" type="application/x-bittorrent" length="734003200" href="https://atom.example.test/dl/3.torrent"/>
+    <content type="html">&lt;p&gt;&lt;a href="magnet:?xt=urn:btih:DLHSXGAOQHT2NTUAQPJPQPRZWQRWUPMT&amp;amp;dn=Black+Clover"&gt;Magnet&lt;/a&gt;&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>[SubsPlease] Some Other Show - 05 (1080p) [ABCDEF12].mkv</title>
+    <id>urn:example:entry:5</id>
+    <updated>2026-10-13T11:00:00Z</updated>
+    <link rel="alternate" href="https://atom.example.test/files/5.torrent"/>
+  </entry>
+</feed>

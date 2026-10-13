@@ -1,0 +1,22 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+backend/.data/
+*.db
+*.db-wal
+*.db-shm
+# node
+node_modules/
+frontend/dist/
+# built SPA (produced by frontend build)
+backend/app/static/*
+!backend/app/static/.gitkeep
+# env
+.env
+# editors
+.vscode/
+.idea/

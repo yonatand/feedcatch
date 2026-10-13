@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel><title>NZB only</title><link>https://feed.example.test/</link><description>x</description>
+<item><title>[DKB] Black Clover Season 2 - 04 [1080p]</title>
+<description><![CDATA[<p>Total Size: 1.5 GiB</p><p>Download Links: <a href="https://feed.example.test/nzb/1234">NZB</a></p>]]></description>
+<link>https://feed.example.test/view/1234</link>
+<enclosure url="https://feed.example.test/nzb/1234" type="application/x-nzb" length="1610612736"/>
+<pubDate>Tue, 13 Oct 2026 13:11:38 +0000</pubDate>
+<guid isPermaLink="true">https://feed.example.test/view/1234</guid></item>
+</channel></rss>
