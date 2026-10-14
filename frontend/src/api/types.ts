@@ -5,6 +5,8 @@ export type Condition = { check: string; passed: boolean; detail: string };
 export type ParsedRelease = {
   group: string | null;
   title: string;
+  /** Other names found in the title (e.g. the part after " / " or in brackets). Optional: older servers omit it. */
+  alt_titles?: string[];
   season: number | null;
   episode: number | null;
   episode_end: number | null;
@@ -483,6 +485,23 @@ export type SearchResult = {
   fetched: number;
   candidates: Candidate[];
   errors: string[];
+  /** Fetched releases that matched no rule (max 100). Optional: older servers omit it. */
+  rejected?: SearchRejected[];
+  /** Total number of rejected releases (may exceed rejected.length). */
+  rejected_total?: number;
+};
+
+export type SearchFailedCheck = { rule_name: string; check: string; detail: string };
+
+export type SearchRejected = {
+  entry_id: number;
+  title: string;
+  parsed_title: string;
+  alt_titles: string[];
+  season_number: number | null;
+  episode_number: number | null;
+  /** First failing check per rule. */
+  failed_checks: SearchFailedCheck[];
 };
 
 export type SearchIn = { query?: string };

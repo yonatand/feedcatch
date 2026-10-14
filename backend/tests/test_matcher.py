@@ -222,3 +222,62 @@ def test_no_episode() -> None:
     ev = run("[DKB] Black Clover S02 [1080p]")
     assert cond(ev, "season")[0] is False
     assert not ev.matched
+
+
+JUDAS = (
+    '[Judas] Kashita Maryoku wa "Revo Barai" de Kyousei Choushuu (Magic Repo Man: Dumped by My Party, '
+    "I\u2019ll Cash In With a Cute Support Fairy to Become the Strongest!) - S01E02 "
+    "[1080p][HEVC x265 10bit][Multi-Subs] (Weekly)"
+)
+REVO_ALIAS = "Kashita Maryoku wa [Revo Barai] de Kyousei Choushuu"
+
+
+def _revo(aliases: list[str]) -> Evaluation:
+    series = Series(id=2, name="Magic Repo Man", aliases=aliases)
+    season = Season(id=20, series_id=2, season_number=1, monitored=True)
+    rule = make_rule(series_id=2, season_id=20, release_group="Judas", require_group_prefix=False)
+    return evaluate(parse_title(JUDAS), JUDAS, None, rule, series, [season])
+
+
+def test_judas_parenthetical_english_title_matches_alias() -> None:
+    ev = _revo([REVO_ALIAS])
+    assert ev.matched, ev.conditions
+    ok, detail = cond(ev, "series")
+    assert ok
+    assert detail == f"""title 'Kashita Maryoku wa "Revo Barai" de Kyousei Choushuu' matches alias '{REVO_ALIAS}'"""
+    assert (ev.season_number, ev.episode_number) == (1, 2)
+
+
+def test_alt_title_matches_name() -> None:
+    english = "Magic Repo Man: Dumped by My Party, I\u2019ll Cash In With a Cute Support Fairy to Become the Strongest!"
+    series = Series(id=2, name=english, aliases=[])
+    season = Season(id=20, series_id=2, season_number=1, monitored=True)
+    rule = make_rule(series_id=2, season_id=20, release_group="Judas", require_group_prefix=False)
+    ev = evaluate(parse_title(JUDAS), JUDAS, None, rule, series, [season])
+    ok, detail = cond(ev, "series")
+    assert ok and detail.startswith("alt title 'Magic Repo Man:") and " matches name '" in detail
+
+
+def test_series_failure_lists_titles_tried() -> None:
+    ok, detail = cond(_revo(["Something Else"]), "series")
+    assert not ok
+    assert detail.startswith("titles tried 'Kashita Maryoku wa \"Revo Barai\" de Kyousei Choushuu', 'Magic Repo Man:")
+    assert detail.endswith("none match 'Magic Repo Man' or its aliases")
+
+
+def test_alt_titles_strict_equality_no_prefix() -> None:
+    # "Magic Repo Man" is a prefix of the alt title but not equal: no match.
+    assert not cond(_revo([]), "series")[0]
+
+
+def test_slash_and_pipe_alt_titles_match() -> None:
+    rule = make_rule(require_group_prefix=False, release_group=None)
+    series = Series(id=1, name="Zeri Feisheng", aliases=[])
+    season = make_season(season_number=1)
+    for raw in (
+        "[Shridhuu][1080p] A Good Day to Ascend / 择日飞升 / Zeri Feisheng - S01E15",
+        "[Shridhuu] A Good Day to Ascend - S01E15 [1080p] | Zeri Feisheng",
+    ):
+        ev = evaluate(parse_title(raw), raw, None, rule, series, [season])
+        assert ev.matched, (raw, ev.conditions)
+        assert cond(ev, "series")[1] == "alt title 'Zeri Feisheng' matches name 'Zeri Feisheng'"

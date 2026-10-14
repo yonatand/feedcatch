@@ -10,6 +10,7 @@ export function ParsedBadges({ parsed }: { parsed: ParsedRelease }) {
       : parsed.episode_end !== null && parsed.episode_end !== parsed.episode
         ? `${pad2(parsed.episode)}-${pad2(parsed.episode_end)}`
         : pad2(parsed.episode);
+  const alts = parsed.alt_titles ?? [];
   return (
     <span className="badges">
       {parsed.group ? <Badge tone="blue">[{parsed.group}]</Badge> : null}
@@ -29,6 +30,11 @@ export function ParsedBadges({ parsed }: { parsed: ParsedRelease }) {
       {parsed.audio ? <Badge>{parsed.audio}</Badge> : null}
       {parsed.subs.length > 0 ? <Badge>subs: {parsed.subs.join(', ')}</Badge> : null}
       {parsed.is_batch ? <Badge tone="purple">batch</Badge> : null}
+      {alts.length > 0 ? (
+        <span className="small muted alt-titles" title={`Also known as: ${alts.join(' / ')}`}>
+          aka {alts.join(' / ')}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -36,6 +42,7 @@ export function ParsedBadges({ parsed }: { parsed: ParsedRelease }) {
 export function ParsedTable({ parsed }: { parsed: ParsedRelease }) {
   const rows: [string, React.ReactNode][] = [
     ['Title', parsed.title || '—'],
+    ...((parsed.alt_titles ?? []).length > 0 ? ([['Also known as', (parsed.alt_titles ?? []).join(' / ')]] as [string, React.ReactNode][]) : []),
     ['Group', parsed.group ?? '—'],
     ['Season', parsed.season ?? '—'],
     [

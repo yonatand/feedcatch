@@ -439,6 +439,66 @@ def test_search_season_candidates_grouped_and_ordered(
     entries = list(db.scalars(select(FeedEntry).where(FeedEntry.outcome == "searched")))
     assert len(entries) == 10 and all(not e.is_historical for e in entries)
 
+    # Releases that produced no candidate, newest first, with each rule's first failing check.
+    assert res.rejected_total == 3 == len(res.rejected)
+    by_group = {r.title.split("]")[0] + "]": r for r in res.rejected}
+    assert set(by_group) == {"[Buzz-Subs]", "[ASW]", "[SubsPlease]"}
+    published = {e.id: e.published_at for e in entries}
+    order = [published[r.entry_id] for r in res.rejected]
+    assert order == sorted(order, reverse=True)
+    buzz = by_group["[Buzz-Subs]"]
+    assert (buzz.parsed_title, buzz.alt_titles, buzz.season_number, buzz.episode_number) == (
+        "Black Clover (2017)",
+        [],
+        2,
+        1,
+    )
+    assert [(f.rule_name, f.check) for f in buzz.failed_checks] == [("Anime Time", "series"), ("Any 1080p", "series")]
+    asw = by_group["[ASW]"]
+    assert (asw.season_number, asw.episode_number) == (None, 172)
+    assert [(f.rule_name, f.check) for f in asw.failed_checks] == [("Anime Time", "group"), ("Any 1080p", "season")]
+    assert asw.failed_checks[1].detail == "ambiguous: no absolute range mapping for episode 172"
+
+
+def test_search_rejected_capped_and_other_season(
+    db: Session, settings: Settings, respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx_mock.get(url__startswith=SEARCH_PREFIX).mock(
+        return_value=httpx.Response(200, content=SEARCH_XML, headers={"content-type": "application/rss+xml"})
+    )
+    series, season = _bc(db)
+    series.aliases = []
+    s1 = Season(series=series, season_number=1, monitored=True)
+    db.add(s1)
+    db.commit()
+    _search_feed(db)
+    db.add(Rule(series=series, season=None, name="Any", priority=0))
+    db.commit()
+    monkeypatch.setattr(search, "MAX_REJECTED", 2)
+
+    res = search.search_season(db, s1, settings)  # every S2 release matches the rule, but for season 2
+    assert res.candidates == []
+    assert res.rejected_total == 10 and len(res.rejected) == 2
+    s2 = next(r for r in res.rejected if r.season_number == 2)
+    assert [(f.rule_name, f.check, f.detail) for f in s2.failed_checks] == [
+        ("Any", "season", "matched season 2, not the searched season 1")
+    ]
+
+
+def test_stale_parsed_without_alt_titles_is_reparsed(db: Session) -> None:
+    from app.services.poller import _parsed
+
+    raw = "[G] Main Title (English Title Here) - 03 [1080p]"
+    feed = FeedSource(name="x", url="https://x.example.test/rss")
+    db.add(feed)
+    db.flush()
+    old = {"raw": raw, "title": "Main Title (English Title Here)", "episode": 3}
+    entry = FeedEntry(feed_id=feed.id, guid="stale", title=raw, parsed=old)
+    assert _parsed(entry).alt_titles == ["English Title Here"]
+    assert _parsed(entry).title == "Main Title"
+    entry.parsed = {**old, "alt_titles": []}
+    assert _parsed(entry).title == "Main Title (English Title Here)"  # current shape: stored value is trusted
+
 
 def test_search_requires_template_and_caps_fetches(
     db: Session, settings: Settings, respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
@@ -694,7 +754,18 @@ def test_api_search_and_grab_missing(
     r = client.post(f"/api/seasons/{sid}/search")  # bodiless
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body) == {"queries", "feeds_searched", "fetched", "candidates", "errors"}
+    assert set(body) == {"queries", "feeds_searched", "fetched", "candidates", "errors", "rejected", "rejected_total"}
+    assert body["rejected_total"] == len(body["rejected"]) > 0
+    assert set(body["rejected"][0]) == {
+        "entry_id",
+        "title",
+        "parsed_title",
+        "alt_titles",
+        "season_number",
+        "episode_number",
+        "failed_checks",
+    }
+    assert set(body["rejected"][0]["failed_checks"][0]) == {"rule_name", "check", "detail"}
     assert body["queries"] == ["Black Clover S02"] and body["feeds_searched"] == ["Tosho"]
     cands = body["candidates"]
     assert [c["episode_number"] for c in cands] == [1, 2]

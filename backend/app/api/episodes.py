@@ -17,8 +17,10 @@ from app.schemas import (
     EpisodeIn,
     EpisodeListOut,
     EpisodeOut,
+    FailedCheckOut,
     FeedEntryOut,
     GrabMissingOut,
+    RejectedReleaseOut,
     SearchIn,
     SearchResultOut,
     SkippedOut,
@@ -69,6 +71,19 @@ def search_out(result: search.SearchResult) -> SearchResultOut:
             for c in result.candidates
         ],
         errors=result.errors,
+        rejected=[
+            RejectedReleaseOut(
+                entry_id=r.entry_id,
+                title=r.title,
+                parsed_title=r.parsed_title,
+                alt_titles=r.alt_titles,
+                season_number=r.season_number,
+                episode_number=r.episode_number,
+                failed_checks=[FailedCheckOut(**vars(f)) for f in r.failed_checks],
+            )
+            for r in result.rejected
+        ],
+        rejected_total=result.rejected_total,
     )
 
 

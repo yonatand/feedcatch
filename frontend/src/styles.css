@@ -929,3 +929,10 @@ pre.json {
 .cta-card h3 { margin: 0 0 4px; font-size: 1.05em; }
 .cta-card > p { margin: 0 0 12px; }
 .cta-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+
+/* Search: rejected releases */
+.rejected-section { border-top: 1px solid var(--border); padding-top: 8px; }
+.rejected-section > .link-btn { font-weight: 600; }
+.rejected-table .title-cell { min-width: 240px; }
+.rejected-checks { padding-left: 1em; }
+.alt-titles { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

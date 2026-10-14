@@ -24,6 +24,7 @@ class ParsedRelease:
     audio: str | None = None
     subs: list[str] = field(default_factory=list)
     is_batch: bool = False
+    alt_titles: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,6 +35,7 @@ class ParsedRelease:
         known.setdefault("raw", "")
         known.setdefault("title", known.get("raw", ""))
         known["subs"] = list(known.get("subs") or [])
+        known["alt_titles"] = list(known.get("alt_titles") or [])
         return cls(**known)
 
 

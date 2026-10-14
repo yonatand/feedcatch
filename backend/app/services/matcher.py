@@ -109,6 +109,23 @@ def _resolve_season(
     return season, episode, Condition("season", True, how)
 
 
+def _series_condition(parsed: ParsedRelease, series: SeriesLike) -> Condition:
+    """Any of [title] + alt_titles equal (after `norm`) to any of [name] + aliases. Strict equality, no prefixes."""
+    titles = [("title", parsed.title), *(("alt title", t) for t in parsed.alt_titles or [])]
+    names = [("name", series.name), *(("alias", a) for a in series.aliases or [])]
+    for t_kind, t in titles:
+        t_n = norm(t)
+        if not t_n:
+            continue
+        for n_kind, n in names:
+            if norm(n) == t_n:
+                return Condition("series", True, f"{t_kind} '{t}' matches {n_kind} '{n}'")
+    tried = ", ".join(f"'{t}'" for _, t in titles)
+    if len(titles) == 1:
+        return Condition("series", False, f"title {tried} does not match '{series.name}' or its aliases")
+    return Condition("series", False, f"titles tried {tried}; none match '{series.name}' or its aliases")
+
+
 def evaluate(
     parsed: ParsedRelease,
     raw_title: str,
@@ -122,14 +139,7 @@ def evaluate(
     raw_norm = _kw_norm(raw_title)
 
     # series
-    names = [series.name, *(series.aliases or [])]
-    title_n = norm(parsed.title)
-    hit = next((n for n in names if norm(n) and norm(n) == title_n), None)
-    conds.append(
-        Condition("series", True, f"title '{parsed.title}' matches '{hit}'")
-        if hit is not None
-        else Condition("series", False, f"title '{parsed.title}' does not match '{series.name}' or its aliases")
-    )
+    conds.append(_series_condition(parsed, series))
 
     # group
     if rule.release_group:

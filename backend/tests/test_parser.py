@@ -274,6 +274,7 @@ CASES: list[tuple[str, dict[str, Any]]] = [
         dict(
             group="Buzz-Subs",
             title="Black Clover (2017)",
+            alt_titles=[],
             season=2,
             episode=1,
             absolute=False,
@@ -288,6 +289,7 @@ CASES: list[tuple[str, dict[str, Any]]] = [
         dict(
             group="SubsPlus+",
             title="Nia Liston - The Merciless Maiden",
+            alt_titles=["Kyouran Reijou Nia Liston"],
             season=1,
             episode=2,
             absolute=False,
@@ -313,7 +315,8 @@ CASES: list[tuple[str, dict[str, Any]]] = [
         "[Shridhuu][1080p] A Good Day to Ascend / 择日飞升 / Zeri Feisheng - S01E15",
         dict(
             group="Shridhuu",
-            title="A Good Day to Ascend / 择日飞升 / Zeri Feisheng",
+            title="A Good Day to Ascend",
+            alt_titles=["择日飞升", "Zeri Feisheng"],
             season=1,
             episode=15,
             absolute=False,
@@ -369,6 +372,8 @@ CASES: list[tuple[str, dict[str, Any]]] = [
         dict(
             group={"VARYG", None},
             title="Nia Liston The Merciless Maiden",
+            alt_titles=["Kyouran Reijou Nia Liston"],
+            subs_contains="Multi-Subs",
             season=1,
             episode=2,
             absolute=False,
@@ -376,6 +381,68 @@ CASES: list[tuple[str, dict[str, Any]]] = [
             source="WEB-DL",
             codec="H264",
         ),
+    ),
+    # Alternate titles (2026-10-14): parenthetical English title, slash and pipe separators.
+    (
+        '[Judas] Kashita Maryoku wa "Revo Barai" de Kyousei Choushuu (Magic Repo Man: Dumped by My Party, '
+        "I’ll Cash In With a Cute Support Fairy to Become the Strongest!) - S01E02 "
+        "[1080p][HEVC x265 10bit][Multi-Subs] (Weekly)",
+        dict(
+            group="Judas",
+            title='Kashita Maryoku wa "Revo Barai" de Kyousei Choushuu',
+            alt_titles=[
+                "Magic Repo Man: Dumped by My Party, I’ll Cash In With a Cute Support Fairy to Become the Strongest!",
+                "Magic Repo Man: Dumped by My Party",
+                "I’ll Cash In With a Cute Support Fairy to Become the Strongest!",
+            ],
+            season=1,
+            episode=2,
+            absolute=False,
+            resolution="1080p",
+            codec="HEVC",
+            subs_contains="Multi-Subs",
+            is_batch=False,
+        ),
+    ),
+    (
+        "Magic Repo Man Dumped by My Party S01E02 SUBFRENCH 720p CR WEB-DL AAC2.0 x264-Tsundere-Raws "
+        "(VOSTFR, Kashita Maryoku wa Revo Barai de Kyousei Choushuu, "
+        "Lent Magic Point Is Forcibly Collected by Revolving Payment)",
+        dict(
+            title="Magic Repo Man Dumped by My Party",
+            alt_titles=[
+                "Kashita Maryoku wa Revo Barai de Kyousei Choushuu",
+                "Lent Magic Point Is Forcibly Collected by Revolving Payment",
+            ],
+            season=1,
+            episode=2,
+            resolution="720p",
+            codec="H264",
+        ),
+    ),
+    (
+        "[Group] Main Title / Alt One / Alt Two - 07 [720p]",
+        dict(group="Group", title="Main Title", alt_titles=["Alt One", "Alt Two"], episode=7, absolute=True),
+    ),
+    (
+        "[Group] Main Title - 07 [1080p] | Alt One | Alt Two",
+        dict(group="Group", title="Main Title", alt_titles=["Alt One", "Alt Two"], episode=7, resolution="1080p"),
+    ),
+    (
+        "[Group] Fate/stay night - 05 [720p]",
+        dict(group="Group", title="Fate/stay night", alt_titles=[], episode=5),
+    ),
+    (
+        "[Group] Title ~Alt Name~ - 03 [1080p]",
+        dict(group="Group", title="Title ~Alt Name~", alt_titles=[], episode=3),
+    ),
+    (
+        '[Group] Title "Quoted Part" - 03 [1080p]',
+        dict(group="Group", title='Title "Quoted Part"', alt_titles=[], episode=3),
+    ),
+    (
+        "[Group] Show (TV) - 04 (Dual Audio) (Weekly) [1080p]",
+        dict(group="Group", title="Show (TV)", alt_titles=[], episode=4, subs_contains="Dual Audio"),
     ),
 ]
 
@@ -410,3 +477,7 @@ def test_roundtrip_dict() -> None:
 
     parsed = parse_title("[DKB] Black Clover - 171 [1080p][HEVC x265 10bit][Multi-Subs]")
     assert ParsedRelease.from_dict(parsed.to_dict()) == parsed
+    alt = parse_title("[G] A / B - 01")
+    assert alt.to_dict()["alt_titles"] == ["B"]
+    assert ParsedRelease.from_dict(alt.to_dict()) == alt
+    assert ParsedRelease.from_dict({"raw": "x", "title": "x"}).alt_titles == []

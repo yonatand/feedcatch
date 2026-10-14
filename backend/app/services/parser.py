@@ -82,6 +82,12 @@ _SEASON_LABEL_RE = re.compile(r"(?i)^\s*(?:season\s*\d{1,2}|\d{1,2}(?:st|nd|rd|t
 _RANGE_TAG_RE = re.compile(r"^\s*\d{1,4}\s*[-~]\s*\d{1,4}\s*$")
 _EXT_RE = re.compile(r"(?i)\.(mkv|mp4|avi)$")
 _ALT_TITLE_RE = re.compile(r"\s\|\s.*$")
+_PIPE_SPLIT_RE = re.compile(r"\s+\|\s+")
+_SLASH_SPLIT_RE = re.compile(r"\s+/\s+")
+_LANG_CODE_RE = re.compile(
+    r"(?i)^(?:VOSTFR|VOSTA|VOSTENG|VOSTDE|SUBFRENCH|TRUEFRENCH|FRENCH|MULTI|VF|VFF|VFQ|VO|VOST|RAW|RAWS)$"
+)
+_RELEASE_WORD_RE = re.compile(r"(?i)" + _B + r"(weekly|batch)" + _E)
 _SCENE_GROUP_RE = re.compile(r"^(.*?)([A-Za-z0-9]+)-([A-Za-z0-9]+)$")
 _SCENE_NOT_GROUP = {"web-dl", "b-global", "ac-3", "multi-subs", "dual-audio"}
 
@@ -138,6 +144,27 @@ def _blank(match: re.Match[str]) -> str:
     return _MARK * len(match.group(0))
 
 
+def _is_alt_segment(content: str) -> bool:
+    """A comma-separated piece of a parenthetical that is a title: >= 3 letters, no known tag or language code."""
+    c = content.strip()
+    if sum(ch.isalpha() for ch in c) < 3 or _LANG_CODE_RE.match(c):
+        return False
+    if _YEAR_RE.match(c) or _CHECKSUM_RE.match(c) or _SEASON_LABEL_RE.match(c) or _RANGE_TAG_RE.match(c):
+        return False
+    return not (_has_tag_token(c) or _RELEASE_WORD_RE.search(c))
+
+
+def _is_alt_title(content: str) -> bool:
+    """A whole parenthetical that reads like an alternate title: an alt segment that also contains a space."""
+    return " " in content.strip() and _is_alt_segment(content)
+
+
+def _add_alt(alts: list[str], value: str) -> None:
+    v = re.sub(r"\s+", " ", value).strip().rstrip(".").strip()
+    if v and v.casefold() not in {a.casefold() for a in alts}:
+        alts.append(v)
+
+
 def _clean_title(text: str) -> str:
     t = text.replace(_MARK, " ")
     t = re.sub(r"\s+", " ", t).strip()
@@ -149,8 +176,12 @@ def _clean_title(text: str) -> str:
 
 def _parse(raw: str) -> ParsedRelease:
     s = raw.strip()
-    # Pre-step: drop " | alternate title" suffix and trailing '.'
-    s = _ALT_TITLE_RE.sub("", s).rstrip()
+    # Pre-step: split off " | alternate title" suffix (kept as alt titles) and trailing '.'
+    pipe_alts: list[str] = []
+    if pm := _ALT_TITLE_RE.search(s):
+        pipe_alts = [p for p in _PIPE_SPLIT_RE.split(pm.group(0)) if p.strip()]
+        s = s[: pm.start()]
+    s = s.rstrip()
     s = s.rstrip(".").rstrip()
     s = _EXT_RE.sub("", s).rstrip()
 
@@ -181,6 +212,8 @@ def _parse(raw: str) -> ParsedRelease:
             subs.append(sub.group(1))
     is_batch = bool(_BATCH_WORD_RE.search(s))
 
+    paren_alts: list[str] = []
+
     # Build the search text: remove bracket tags (keeping positions via _MARK).
     def _bracket(match: re.Match[str]) -> str:
         nonlocal is_batch
@@ -194,7 +227,24 @@ def _parse(raw: str) -> ParsedRelease:
                 return whole  # "(2024)" stays part of the title
             if _SEASON_LABEL_RE.match(content):
                 return " " + content + " "  # "(Season 2)" -> " Season 2 "
-            if not (_CHECKSUM_RE.match(content.strip()) or _has_tag_token(content) or _RANGE_TAG_RE.match(content)):
+            is_tag = bool(
+                _CHECKSUM_RE.match(content.strip()) or _has_tag_token(content) or _RANGE_TAG_RE.match(content)
+            )
+            segs = content.split(", ")
+            if len(segs) >= 2:
+                # "(VOSTFR, Alt One, Alt Two)" / "(Alt Title, Multi-Subs)": one alt title per non-tag segment.
+                kept = [seg for seg in segs if _is_alt_segment(seg)]
+                if kept:
+                    if len(kept) == len(segs) and _is_alt_title(content):
+                        paren_alts.append(content)  # all title-like: the full text may itself be the title
+                    paren_alts.extend(kept)
+                elif not is_tag:
+                    return whole
+            elif is_tag:
+                pass
+            elif _is_alt_title(content):
+                paren_alts.append(content)  # "(English Title: Subtitle)" -> alt title, removed from title
+            else:
                 return whole
         return _MARK * len(whole)
 
@@ -266,6 +316,15 @@ def _parse(raw: str) -> ParsedRelease:
     if not title:
         title = _clean_title(text) or raw.strip()
 
+    # "Title / Alt / Alt2" -> title + alt titles (spaced slash only, so "Fate/stay night" stays intact).
+    alt_titles: list[str] = []
+    parts = [p.strip() for p in _SLASH_SPLIT_RE.split(title) if p.strip()]
+    if len(parts) > 1:
+        title = parts[0]
+    for alt in [*parts[1:], *paren_alts, *pipe_alts]:
+        if alt.strip().casefold() != title.casefold():
+            _add_alt(alt_titles, alt)
+
     return ParsedRelease(
         raw=raw,
         title=title,
@@ -281,6 +340,7 @@ def _parse(raw: str) -> ParsedRelease:
         audio=audio,
         subs=subs,
         is_batch=is_batch,
+        alt_titles=alt_titles,
     )
 
 

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useGrabMissing, useSeasonSearch } from '../api/hooks';
-import type { Candidate, EpisodeStatus, SearchResult } from '../api/types';
+import type { Candidate, EpisodeStatus, SearchRejected, SearchResult } from '../api/types';
 import { formatBytes, pad2 } from '../lib/format';
 import { ConditionsTable } from './ConditionsTable';
 import { Drawer } from './Drawer';
@@ -130,6 +130,104 @@ function CandidateRows({ g, seasonId, open, setOpen }: { g: Group; seasonId: num
         );
       })}
     </>
+  );
+}
+
+function sxe(r: SearchRejected): string {
+  if (r.episode_number === null) return r.season_number === null ? '—' : `S${pad2(r.season_number)}`;
+  return `${r.season_number === null ? '' : `S${pad2(r.season_number)}`}E${pad2(r.episode_number)}`;
+}
+
+function RejectedRow({ r }: { r: SearchRejected }) {
+  return (
+    <tr>
+      <td className="title-cell">
+        <Link to={`/releases/${r.entry_id}`} title={r.title}>
+          {r.title}
+        </Link>
+        <div className="small muted">
+          parsed as: <span className="mono">{r.parsed_title || '—'}</span>
+          {r.alt_titles.length > 0 ? <> · aka {r.alt_titles.join(' / ')}</> : null}
+        </div>
+      </td>
+      <td className="nowrap">{sxe(r)}</td>
+      <td>
+        {r.failed_checks.length === 0 ? (
+          <span className="small muted">no enabled rule</span>
+        ) : (
+          <ul className="plain-list small rejected-checks">
+            {r.failed_checks.map((f, i) => (
+              <li key={`${f.rule_name}-${i}`} className="break">
+                <strong>{f.rule_name}</strong> · <span className="mono">{f.check}</span>: {f.detail}
+              </li>
+            ))}
+          </ul>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function RejectedTable({ rows }: { rows: readonly SearchRejected[] }) {
+  return (
+    <TableWrap>
+      <table className="table table-compact rejected-table">
+        <thead>
+          <tr>
+            <th>Release</th>
+            <th>Ep</th>
+            <th>Why rejected (first failing check per rule)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <RejectedRow key={r.entry_id} r={r} />
+          ))}
+        </tbody>
+      </table>
+    </TableWrap>
+  );
+}
+
+/** Fetched releases that matched no rule, with the first failing check per rule. Collapsed by default. */
+function RejectedSection({ rejected, total, onlyEp }: { rejected: readonly SearchRejected[]; total: number; onlyEp: number | null }) {
+  const [open, setOpen] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
+  const shown = rejected.slice(0, 100);
+  const inScope = onlyEp === null ? shown : shown.filter((r) => r.episode_number === onlyEp);
+  const others = onlyEp === null ? [] : shown.filter((r) => r.episode_number !== onlyEp);
+  return (
+    <div className="rejected-section">
+      <button type="button" className="link-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? '▾' : '▸'} Fetched releases that matched no rule ({total})
+      </button>
+      {open ? (
+        <div className="stack">
+          {total > shown.length ? (
+            <p className="small muted">
+              Showing the first {shown.length} of {total}.
+            </p>
+          ) : null}
+          {shown.length === 0 ? (
+            <p className="small muted">Every fetched release matched a rule.</p>
+          ) : onlyEp === null ? (
+            <RejectedTable rows={shown} />
+          ) : (
+            <>
+              {inScope.length > 0 ? <RejectedTable rows={inScope} /> : <p className="small muted">No rejected release was parsed as episode {onlyEp}.</p>}
+              {others.length > 0 ? (
+                <>
+                  <button type="button" className="link-btn small" aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}>
+                    {showOthers ? 'Hide' : 'Show'} {others.length} other rejected release{others.length === 1 ? '' : 's'}
+                  </button>
+                  {showOthers ? <RejectedTable rows={others} /> : null}
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -376,7 +474,9 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
             <p className="muted">
               {onlyEp !== null && groups.length > 0
                 ? `No candidates for episode ${onlyEp}.`
-                : 'No matching releases found. Check the rule filters (group, resolution, keywords) or try a custom query.'}
+                : result.rejected
+                  ? 'No release passed your rules. Open the list below to see why each fetched release was rejected.'
+                  : 'No matching releases found. Check the rule filters (group, resolution, keywords) or try a custom query.'}
             </p>
           ) : (
             <TableWrap>
@@ -401,6 +501,14 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
               </table>
             </TableWrap>
           )}
+          {result.rejected ? (
+            <RejectedSection
+              key={`${result.fetched}:${result.rejected_total ?? result.rejected.length}`}
+              rejected={result.rejected}
+              total={result.rejected_total ?? result.rejected.length}
+              onlyEp={onlyEp}
+            />
+          ) : null}
         </div>
       ) : null}
     </Drawer>

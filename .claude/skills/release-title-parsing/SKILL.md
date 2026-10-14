@@ -79,3 +79,11 @@ A leading ` - ` right after the group (`[Doomdos] - Title - 50`) is ignored.
 - When several ` - N` numbers appear, the last one wins.
 - `(Season 2)` in parentheses is unwrapped; `(2024)`-style years stay in the title.
 - Rule values for codec/source/resolution are canonicalised like the parser output (`x264` == `H264`).
+
+## Alternate titles (added 2026-10-14 after a real miss)
+Release groups often embed a second title: `Romaji "Quoted" Title (English Title) - S01E02`, `Title / 中文 / Romaji - S01E15`, `Title | Alt` (AnimeTosho),
+`English (Romaji, Multi-Subs)` (ToonsHub/Tsundere-Raws). `parse_title` must put such segments into `alt_titles` (not into `title`): a parenthetical in the
+title part that is not a known tag (resolution/source/codec/audio/subs/year/checksum/Weekly/Batch) and has >= 3 letters and a space; ` / ` and ` | ` splits.
+The matcher's `series` check passes when ANY of `[title] + alt_titles` equals ANY of `[name] + aliases` after `norm()`. Still no prefix matching.
+Real case: `[Judas] Kashita Maryoku wa "Revo Barai" de Kyousei Choushuu (Magic Repo Man: Dumped by My Party, I’ll Cash In With a Cute Support Fairy to Become the Strongest!) - S01E02 [1080p][HEVC x265 10bit][Multi-Subs] (Weekly)`
+-> title `Kashita Maryoku wa "Revo Barai" de Kyousei Choushuu`, alt `Magic Repo Man: Dumped by My Party, ...`, S1 E2, 1080p, HEVC.

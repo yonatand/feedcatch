@@ -24,6 +24,7 @@ from app.services import activity, dispatcher, matcher, paths, settings_store, s
 from app.services.episodes import HAVE_STATUSES, compute_status, downloads_by_episode, wanted
 from app.services.feeds import FeedFetchError, ParsedEntry, fetch_feed
 from app.services.poller import _parsed, _store_evaluation
+from app.services.types import Evaluation
 
 log = structlog.get_logger("search")
 
@@ -31,6 +32,7 @@ MAX_FETCHES_PER_SEARCH = 6
 MAX_ALIASES = 2
 SEARCH_ALL_MAX_SEASONS = 10
 JOB_MAX_SEASONS = 20
+MAX_REJECTED = 100
 
 # Held while a multi-season search runs (API search-all or the scheduler job): a second one gets 409 / is skipped.
 search_all_lock = threading.Lock()
@@ -60,12 +62,36 @@ class Candidate:
 
 
 @dataclass
+class FailedCheck:
+    """The first failing condition of one rule for a rejected release."""
+
+    rule_name: str
+    check: str
+    detail: str
+
+
+@dataclass
+class Rejected:
+    """A fetched release that produced no candidate for the searched season."""
+
+    entry_id: int
+    title: str
+    parsed_title: str
+    alt_titles: list[str]
+    season_number: int | None
+    episode_number: int | None
+    failed_checks: list[FailedCheck] = field(default_factory=list)
+
+
+@dataclass
 class SearchResult:
     queries: list[str] = field(default_factory=list)
     feeds_searched: list[str] = field(default_factory=list)
     fetched: int = 0
     candidates: list[Candidate] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    rejected: list[Rejected] = field(default_factory=list)  # newest first, capped at MAX_REJECTED
+    rejected_total: int = 0
 
 
 @dataclass
@@ -235,17 +261,40 @@ def search_season(db: Session, season: Season, settings: Settings, query: str | 
         save_path = None
 
     best: dict[tuple[int, int], tuple[Rule, list[dict[str, Any]]]] = {}
+    rejected: list[tuple[FeedEntry, Rejected]] = []
     for entry in entries.values():
         parsed = _parsed(entry)
+        failed: list[FailedCheck] = []
+        accepted = False
         for rule in rules:
             res = matcher.evaluate(parsed, entry.title, entry.size_bytes, rule, series, views)
             _store_evaluation(db, entry, rule, res)
             if not res.matched or res.season_id != season.id or res.episode_number is None:
+                failed.append(_first_failure(rule, res, season))
                 continue
+            accepted = True
             key = (entry.id, res.episode_number)
             if key not in best:  # rules are ordered priority desc, id asc
                 best[key] = (rule, res.conditions_as_dicts())
+        if not accepted:
+            rejected.append(
+                (
+                    entry,
+                    Rejected(
+                        entry_id=entry.id,
+                        title=entry.title,
+                        parsed_title=parsed.title,
+                        alt_titles=list(parsed.alt_titles),
+                        season_number=parsed.season,
+                        episode_number=parsed.episode,
+                        failed_checks=failed,
+                    ),
+                )
+            )
     db.flush()
+    rejected.sort(key=lambda r: (-(r[0].published_at.timestamp() if r[0].published_at else 0), -r[0].id))
+    result.rejected_total = len(rejected)
+    result.rejected = [r for _, r in rejected[:MAX_REJECTED]]
 
     ep_dates = {e.episode_number: e.air_date for e in season.episodes}
     dls = downloads_by_episode(db, [season.id])
@@ -276,9 +325,22 @@ def search_season(db: Session, season: Season, settings: Settings, query: str | 
         queries=result.queries,
         fetched=result.fetched,
         candidates=len(result.candidates),
+        rejected=result.rejected_total,
         errors=len(result.errors),
     )
     return result
+
+
+def _first_failure(rule: Rule, res: Evaluation, season: Season) -> FailedCheck:
+    """First failing condition of a rule; a match for another season is reported as a season failure."""
+    bad = next((c for c in res.conditions if not c.passed), None)
+    if bad is not None:
+        return FailedCheck(rule_name=rule.name, check=bad.check, detail=bad.detail)
+    return FailedCheck(
+        rule_name=rule.name,
+        check="season",
+        detail=f"matched season {res.season_number}, not the searched season {season.season_number}",
+    )
 
 
 # ---------------------------------------------------------------- grab missing

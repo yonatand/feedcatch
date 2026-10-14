@@ -66,7 +66,8 @@ def is_polling(feed_id: int) -> bool:
 
 
 def _parsed(entry: FeedEntry) -> ParsedRelease:
-    if entry.parsed:
+    # Re-parse entries stored before `alt_titles` existed so they match by alternate title too.
+    if entry.parsed and "alt_titles" in entry.parsed:
         return ParsedRelease.from_dict(entry.parsed)
     return parse_title(entry.title)
 

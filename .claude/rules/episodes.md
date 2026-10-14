@@ -120,3 +120,9 @@ Season summary: `episode_count`, `downloaded_count`, `missing_count` (missing = 
 - Downloads can be deleted: `DELETE /api/downloads/{id}` removes feedcatch's record only (the torrent stays in qBittorrent; invariant 6). After deletion the episode
   becomes `missing` again and can be re-grabbed. UI: "Delete" with inline confirm on the Downloads page and in the episode row's download popover; the confirm text says
   the torrent is not removed from qBittorrent.
+
+## Search transparency (added 2026-10-14 after the second user report)
+`POST /api/seasons/{id}/search` also returns `rejected: [{entry_id, title, parsed_title, alt_titles, season_number, episode_number, failed_checks: [{rule_name, check, detail}]}]`
+(newest first, capped at 100) and `rejected_total`. Each rule contributes its first failing condition; a rule that matched another season yields
+`{check: "season", detail: "matched season N, not the searched season M"}`. `ParsedRelease.alt_titles` exists; stored entries without the key are re-parsed on read.
+The UI lists these under "Fetched releases that matched no rule". The series check matches ANY parsed title/alt title against ANY name/alias.

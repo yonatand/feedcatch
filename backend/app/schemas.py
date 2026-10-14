@@ -75,6 +75,7 @@ class ParsedReleaseOut(_Out):
     subs: list[str]
     is_batch: bool
     raw: str
+    alt_titles: list[str] = []
 
     @classmethod
     def from_parsed(cls, p: ParsedRelease) -> ParsedReleaseOut:
@@ -173,7 +174,7 @@ class FeedEntryPreviewOut(_Out):
 
 
 def _parsed_of(entry: models.FeedEntry) -> ParsedReleaseOut:
-    if entry.parsed:
+    if entry.parsed and "alt_titles" in entry.parsed:
         return ParsedReleaseOut.from_parsed(ParsedRelease.from_dict(entry.parsed))
     from app.services.parser import parse_title
 
@@ -1108,12 +1109,30 @@ class CandidateOut(BaseModel):
     already_have: bool
 
 
+class FailedCheckOut(BaseModel):
+    rule_name: str
+    check: str
+    detail: str
+
+
+class RejectedReleaseOut(BaseModel):
+    entry_id: int
+    title: str
+    parsed_title: str
+    alt_titles: list[str]
+    season_number: int | None
+    episode_number: int | None
+    failed_checks: list[FailedCheckOut]
+
+
 class SearchResultOut(BaseModel):
     queries: list[str]
     feeds_searched: list[str]
     fetched: int
     candidates: list[CandidateOut]
     errors: list[str]
+    rejected: list[RejectedReleaseOut] = []
+    rejected_total: int = 0
 
 
 class SkippedOut(BaseModel):
