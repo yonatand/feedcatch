@@ -21,17 +21,19 @@ export function FeedPreviewList({ items }: { items: FeedEntryPreview[] }) {
           {items.length === 0 ? <EmptyRow colSpan={3}>The feed returned no entries.</EmptyRow> : null}
           {items.map((e) => (
             <tr key={e.guid}>
-              <td>
+              <td data-label="Published">
                 <TimeAgo iso={e.published_at} />
               </td>
-              <td className="title-cell">
+              <td className="title-cell cell-main">
                 <div className="break">{e.title}</div>
                 <div className="row-sub">
                   <ParsedBadges parsed={e.parsed} />
                   <LinkKinds magnet={e.magnet_url !== null} torrent={e.torrent_url !== null} nzb={e.has_nzb} />
                 </div>
               </td>
-              <td className="num nowrap">{formatBytes(e.size_bytes)}</td>
+              <td className="num nowrap" data-label="Size">
+                {formatBytes(e.size_bytes)}
+              </td>
             </tr>
           ))}
         </tbody>

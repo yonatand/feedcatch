@@ -3,6 +3,7 @@ import { useDeleteSeries, useSeriesList, useUpdateSeries } from '../api/hooks';
 import { ConfirmInline } from '../components/ConfirmInline';
 import { Cover } from '../components/Cover';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { MobileActionBar } from '../components/MobileActionBar';
 import { LoadingBlock } from '../components/Spinner';
 import { Badge, StatusBadge } from '../components/StatusBadge';
 import { EmptyRow, PageHeader, TableWrap } from '../components/Table';
@@ -19,6 +20,7 @@ export default function SeriesList() {
       <PageHeader
         title="Series"
         subtitle="Tracked series and their seasons. Nothing is grabbed automatically for a series until it is monitored."
+        actionsInBar
         actions={
           <Link to="/series/new" className="btn btn-primary">
             New series
@@ -55,16 +57,16 @@ export default function SeriesList() {
                   <td className="cover-col">
                     <Cover url={s.cover_url} alt={s.name} size="sm" />
                   </td>
-                  <td className="title-cell">
+                  <td className="title-cell cell-main">
                     <Link to={`/series/${s.id}`}>
                       <strong>{s.name}</strong>
                     </Link>
                     {s.aliases.length > 0 ? <div className="small muted">aliases: {s.aliases.join(', ')}</div> : null}
                   </td>
-                  <td>
+                  <td data-label="Monitored">
                     <StatusBadge status={s.monitored ? 'monitored' : 'unmonitored'} />
                   </td>
-                  <td>
+                  <td data-label="Seasons" className="cell-grow">
                     {s.seasons.length === 0 ? (
                       <span className="muted small">none — add a season to enable matching</span>
                     ) : (
@@ -77,8 +79,10 @@ export default function SeriesList() {
                       </span>
                     )}
                   </td>
-                  <td className="num">{s.rule_count}</td>
-                  <td>
+                  <td className="num" data-label="Rules">
+                    {s.rule_count}
+                  </td>
+                  <td className="cell-actions">
                     <div className="actions">
                       <Link to={`/series/${s.id}`} className="btn btn-sm">
                         Open
@@ -93,6 +97,7 @@ export default function SeriesList() {
                       </button>
                       <ConfirmInline
                         label="Delete"
+                        ariaLabel={`Delete series ${s.name}`}
                         confirmLabel="Delete series"
                         message="Removes its seasons and rules. Torrents already in qBittorrent are not touched."
                         pending={del.isPending && del.variables === s.id}
@@ -106,6 +111,11 @@ export default function SeriesList() {
           </table>
         </TableWrap>
       )}
+      <MobileActionBar>
+        <Link to="/series/new" className="btn btn-primary">
+          New series
+        </Link>
+      </MobileActionBar>
     </>
   );
 }

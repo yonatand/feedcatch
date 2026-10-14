@@ -90,6 +90,9 @@ export default function Settings() {
                 id={id}
                 type="text"
                 className="mono"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
                 required
                 disabled={env('media_base_path')}
                 value={v.media_base_path}
@@ -112,6 +115,9 @@ export default function Settings() {
                 id={id}
                 type="text"
                 className="mono"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
                 disabled={env('default_season_folder_format')}
                 value={v.default_season_folder_format}
                 onChange={(e) => set('default_season_folder_format', e.target.value)}
@@ -273,6 +279,8 @@ export default function Settings() {
                   id={id}
                   type="password"
                   autoComplete="off"
+                  autoCapitalize="off"
+                  autoCorrect="off"
                   spellCheck={false}
                   disabled={env('tmdb_api_key') || tmdbClear}
                   value={tmdbKey}

@@ -351,7 +351,16 @@ export default function SeriesNew() {
         subtitle="Define the series, its seasons and a matching rule, test it against recent releases, then decide whether to monitor it. Nothing is saved until the last step."
         actions={<Link to="/series">Back to series</Link>}
       />
-      <ol className="stepper" aria-label="Wizard steps">
+      <div className="step-compact m-only" aria-live="polite">
+        <span className="step-num">{step + 1}</span>
+        <span>
+          Step {step + 1}/{STEPS.length} · <strong>{STEPS[step]}</strong>
+        </span>
+        <span className="step-compact-bar" aria-hidden="true">
+          <span style={{ width: `${((step + 1) / STEPS.length) * 100}%` }} />
+        </span>
+      </div>
+      <ol className="stepper d-only" aria-label="Wizard steps">
         {STEPS.map((s, i) => (
           <li key={s} className={i === step ? 'current' : i < step ? 'done' : ''} aria-current={i === step ? 'step' : undefined}>
             <span className="step-num">{i + 1}</span> {s}
@@ -418,6 +427,9 @@ export default function SeriesNew() {
                     id={id}
                     type="text"
                     className="mono"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={series.season_folder_format ?? ''}
                     onChange={(e) => {
                       setFormatTouched(true);
@@ -428,7 +440,7 @@ export default function SeriesNew() {
               </FormField>
               <FormField label="Category override" help="Optional qBittorrent category for this series.">
                 {(id) => (
-                  <input id={id} type="text" value={series.category_override ?? ''} onChange={(e) => setS('category_override', e.target.value === '' ? null : e.target.value)} />
+                  <input id={id} type="text" autoCapitalize="off" autoCorrect="off" value={series.category_override ?? ''} onChange={(e) => setS('category_override', e.target.value === '' ? null : e.target.value)} />
                 )}
               </FormField>
               <FormField
@@ -441,13 +453,16 @@ export default function SeriesNew() {
                     id={id}
                     type="text"
                     className="mono"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={series.path_override ?? ''}
                     onChange={(e) => setS('path_override', e.target.value === '' ? null : e.target.value)}
                   />
                 )}
               </FormField>
             </div>
-            <div className="form-actions">
+            <div className="form-actions wizard-nav">
               <button type="submit" className="btn btn-primary" disabled={!step1Valid}>
                 Next: seasons
               </button>
@@ -506,7 +521,7 @@ export default function SeriesNew() {
           {suggestion && linked && suggestion.related.length > 0 ? (
             <RelatedList related={suggestion.related} added={addedRelated} onAdd={addRelatedSeason} label={linkedLabel} />
           ) : null}
-          <div className="form-actions">
+          <div className="form-actions wizard-nav">
             <button type="button" className="btn btn-ghost" onClick={() => setStep(0)}>
               Back
             </button>
@@ -570,7 +585,7 @@ export default function SeriesNew() {
               )
             ) : null}
           </Card>
-          <div className="form-actions">
+          <div className="form-actions wizard-nav">
             <button type="button" className="btn btn-ghost" onClick={() => setStep(1)}>
               Back
             </button>
@@ -655,7 +670,7 @@ export default function SeriesNew() {
             </Notice>
           ) : null}
           <ErrorBanner error={finishError} title="Could not finish" />
-          <div className="form-actions">
+          <div className="form-actions wizard-nav">
             <button type="button" className="btn btn-ghost" disabled={editLocked} onClick={() => setStep(2)}>
               Back
             </button>

@@ -40,7 +40,7 @@ export function SimulationTable({ items }: { items: Row[] }) {
             {rows.map(({ r, i }) => (
               <Fragment key={i}>
                 <tr className={r.matched ? 'row-match' : ''}>
-                  <td className="title-cell">
+                  <td className="title-cell cell-main">
                     {r.entry_id !== undefined ? (
                       <Link to={`/releases/${r.entry_id}`} className="break">
                         {r.title}
@@ -52,13 +52,19 @@ export function SimulationTable({ items }: { items: Row[] }) {
                       <ParsedBadges parsed={r.parsed} />
                     </div>
                   </td>
-                  <td>
+                  <td data-label="Matched">
                     <StatusBadge status={r.matched ? 'matched' : 'rejected'} />
                   </td>
-                  <td className="num">{r.season_number ?? '—'}</td>
-                  <td className="num">{r.episode_number ?? '—'}</td>
-                  <td>{r.save_path ? <code className="path-sm">{r.save_path}</code> : <span className="muted">—</span>}</td>
-                  <td>
+                  <td className="num" data-label="Season">
+                    {r.season_number ?? '—'}
+                  </td>
+                  <td className="num" data-label="Episode">
+                    {r.episode_number ?? '—'}
+                  </td>
+                  <td className="cell-wide" data-label="Save path">
+                    {r.save_path ? <code className="path-sm">{r.save_path}</code> : <span className="muted">—</span>}
+                  </td>
+                  <td className="cell-actions">
                     <button
                       type="button"
                       className="btn btn-sm btn-ghost"
@@ -71,7 +77,7 @@ export function SimulationTable({ items }: { items: Row[] }) {
                 </tr>
                 {open[i] ? (
                   <tr className="detail-row">
-                    <td colSpan={6}>
+                    <td colSpan={6} className="cell-wide">
                       <ConditionsTable conditions={r.conditions} compact />
                     </td>
                   </tr>

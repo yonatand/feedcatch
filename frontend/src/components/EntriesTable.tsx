@@ -39,10 +39,10 @@ export function EntriesTable({ items, compact, emptyText = 'No releases yet.' }:
           {items.length === 0 ? <EmptyRow colSpan={cols}>{emptyText}</EmptyRow> : null}
           {items.map((e) => (
             <tr key={e.id}>
-              <td>
+              <td data-label="Seen">
                 <TimeAgo iso={e.first_seen_at} />
               </td>
-              <td className="title-cell">
+              <td className="title-cell cell-main">
                 <Link to={`/releases/${e.id}`} title={e.title}>
                   {e.title}
                 </Link>
@@ -53,7 +53,7 @@ export function EntriesTable({ items, compact, emptyText = 'No releases yet.' }:
                   </div>
                 ) : null}
               </td>
-              <td>
+              <td data-label="Outcome" className="cell-grow">
                 <StatusBadge status={e.outcome} />
                 {e.outcome_summary ? (
                   <div className="small muted" title={e.outcome_summary}>
@@ -61,8 +61,16 @@ export function EntriesTable({ items, compact, emptyText = 'No releases yet.' }:
                   </div>
                 ) : null}
               </td>
-              {!compact ? <td className="nowrap">{e.feed_name}</td> : null}
-              {!compact ? <td className="num nowrap">{formatBytes(e.size_bytes)}</td> : null}
+              {!compact ? (
+                <td className="nowrap" data-label="Feed">
+                  {e.feed_name}
+                </td>
+              ) : null}
+              {!compact ? (
+                <td className="num nowrap" data-label="Size">
+                  {formatBytes(e.size_bytes)}
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>

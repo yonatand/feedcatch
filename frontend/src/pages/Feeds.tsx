@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage } from '../api/client';
 import { useDeleteFeed, useFeedPreview, useFeeds, usePollFeed, useSaveFeed, useTestFeedUrl } from '../api/hooks';
@@ -7,6 +7,7 @@ import { ConfirmInline } from '../components/ConfirmInline';
 import { Drawer } from '../components/Drawer';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { FeedPreviewList } from '../components/FeedPreviewList';
+import { MobileActionBar } from '../components/MobileActionBar';
 import { CheckField, FormField } from '../components/FormField';
 import { NumberInput } from '../components/NumberInput';
 import { LoadingBlock, Spinner } from '../components/Spinner';
@@ -118,8 +119,15 @@ function FeedForm({ initial, onDone }: { initial: FeedSource | null; onDone: () 
   const [preset, setPreset] = useState('');
   const intervalBad = v.poll_interval_minutes < 5 || v.poll_interval_minutes > 1440;
   const tplProblem = templateProblem(v.search_url_template);
+  const ref = useRef<HTMLDivElement>(null);
+  // Opened from a row (or the mobile action bar) further down: bring the form into view.
+  useEffect(() => {
+    const el = ref.current;
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: 'start' });
+  }, []);
 
   return (
+    <div ref={ref} className="scroll-anchor">
     <Card title={initial ? `Edit feed: ${initial.name}` : 'Add feed'}>
       <form
         onSubmit={(e) => {
@@ -157,11 +165,22 @@ function FeedForm({ initial, onDone }: { initial: FeedSource | null; onDone: () 
             )}
           </FormField>
           <FormField label="Name">
-            {(id) => <input id={id} type="text" required value={v.name} onChange={(e) => set('name', e.target.value)} />}
+            {(id) => <input id={id} type="text" required autoCorrect="off" value={v.name} onChange={(e) => set('name', e.target.value)} />}
           </FormField>
           <FormField label="RSS2 / Atom URL" help="http(s) only. Private/LAN hosts are rejected unless allowed in Settings." className="span-2">
             {(id) => (
-              <input id={id} type="url" required value={v.url} onChange={(e) => set('url', e.target.value)} placeholder="https://example.org/rss" />
+              <input
+                id={id}
+                type="url"
+                inputMode="url"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+                value={v.url}
+                onChange={(e) => set('url', e.target.value)}
+                placeholder="https://example.org/rss"
+              />
             )}
           </FormField>
           <FormField
@@ -181,6 +200,9 @@ function FeedForm({ initial, onDone }: { initial: FeedSource | null; onDone: () 
                 id={id}
                 type="text"
                 inputMode="url"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
                 className="mono"
                 value={v.search_url_template ?? ''}
                 onChange={(e) => set('search_url_template', e.target.value === '' ? null : e.target.value)}
@@ -227,6 +249,7 @@ function FeedForm({ initial, onDone }: { initial: FeedSource | null; onDone: () 
       <ErrorBanner error={test.error} title="Test request failed" />
       {test.data ? <TestResultView r={test.data} /> : null}
     </Card>
+    </div>
   );
 }
 
@@ -273,6 +296,7 @@ export default function Feeds() {
       <PageHeader
         title="Feeds"
         subtitle="RSS2/Atom sources polled on a schedule. Only magnet and .torrent links are ever sent to qBittorrent; NZB links are ignored."
+        actionsInBar
         actions={
           editing === null ? (
             <button type="button" className="btn btn-primary" onClick={() => setEditing('new')}>
@@ -311,7 +335,7 @@ export default function Feeds() {
                 return (
                   <FeedRow key={f.id}>
                     <tr>
-                      <td className="title-cell">
+                      <td className="title-cell cell-main">
                         <strong>{f.name}</strong>
                         <div className="small muted break">{f.url}</div>
                         <div className="small muted">
@@ -325,7 +349,7 @@ export default function Feeds() {
                           )}
                         </div>
                       </td>
-                      <td>
+                      <td data-label="Status" className="cell-grow">
                         {f.enabled ? <StatusBadge status={f.last_status} /> : <StatusBadge status="disabled" />}
                         {f.consecutive_failures > 0 ? <div className="small err-text">{f.consecutive_failures} consecutive failures</div> : null}
                         {f.last_error ? (
@@ -334,15 +358,19 @@ export default function Feeds() {
                           </div>
                         ) : null}
                       </td>
-                      <td>
+                      <td data-label="Last check">
                         <TimeAgo iso={f.last_checked_at} fallback="never" />
                         <div className="small muted">
                           last ok <TimeAgo iso={f.last_success_at} fallback="never" />
                         </div>
                       </td>
-                      <td className="num nowrap">{f.poll_interval_minutes} min</td>
-                      <td className="num">{f.entry_count}</td>
-                      <td>
+                      <td className="num nowrap" data-label="Interval">
+                        {f.poll_interval_minutes} min
+                      </td>
+                      <td className="num" data-label="Entries">
+                        {f.entry_count}
+                      </td>
+                      <td className="cell-actions">
                         <div className="actions">
                           <button
                             type="button"
@@ -390,6 +418,7 @@ export default function Feeds() {
                           </button>
                           <ConfirmInline
                             label="Delete"
+                            ariaLabel={`Delete feed ${f.name}`}
                             confirmLabel="Delete feed"
                             message={`Delete “${f.name}”?`}
                             pending={del.isPending && del.variables === f.id}
@@ -400,13 +429,13 @@ export default function Feeds() {
                     </tr>
                     {b ? (
                       <tr className="detail-row">
-                        <td colSpan={6}>
+                        <td colSpan={6} className="cell-wide">
                           <Spinner label={b === 'poll' ? 'Polling feed (synchronous)…' : 'Testing feed URL…'} />
                         </td>
                       </tr>
                     ) : r ? (
                       <tr className="detail-row">
-                        <td colSpan={6}>
+                        <td colSpan={6} className="cell-wide">
                           <div className="detail-head">
                             <strong className="small">{r.kind === 'poll' ? 'Poll result' : r.kind === 'test' ? 'Test result' : 'Error'}</strong>
                             <button
@@ -435,6 +464,13 @@ export default function Feeds() {
         </TableWrap>
       )}
       {preview ? <PreviewDrawer feed={preview} onClose={() => setPreview(null)} /> : null}
+      {editing === null ? (
+        <MobileActionBar>
+          <button type="button" className="btn btn-primary" onClick={() => setEditing('new')}>
+            Add feed
+          </button>
+        </MobileActionBar>
+      ) : null}
     </>
   );
 }

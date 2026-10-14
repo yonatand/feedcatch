@@ -17,8 +17,8 @@ export function ConditionsTable({ conditions, compact }: { conditions: Condition
         <tbody>
           {conditions.map((c, i) => (
             <tr key={`${c.check}-${i}`} className={c.passed ? '' : 'row-fail'}>
-              <td className="nowrap mono">{c.check}</td>
-              <td className="center">
+              <td className="nowrap mono cond-check">{c.check}</td>
+              <td className="center cond-pass">
                 {c.passed ? (
                   <span className="pass" aria-label="passed">
                     ✓
@@ -29,7 +29,7 @@ export function ConditionsTable({ conditions, compact }: { conditions: Condition
                   </span>
                 )}
               </td>
-              <td className="break">{c.detail}</td>
+              <td className="break cond-detail">{c.detail}</td>
             </tr>
           ))}
         </tbody>

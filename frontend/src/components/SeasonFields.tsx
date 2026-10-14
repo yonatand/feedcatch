@@ -124,6 +124,9 @@ export function SeasonFields({ value, onChange, seriesName, seasonFolderFormat, 
               id={id}
               type="text"
               className="mono"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               value={value.path_override ?? ''}
               placeholder="/home/qbittorrent-nox/media/Some Show/Season 02"
               onChange={(e) => set('path_override', e.target.value === '' ? null : e.target.value)}

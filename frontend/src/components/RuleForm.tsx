@@ -104,6 +104,8 @@ export function RegexField({ value, onChange }: { value: string | null; onChange
           className="mono"
           value={value ?? ''}
           placeholder={String.raw`e.g. ^\[DKB\] Black[ ._]Clover`}
+          autoCapitalize="off"
+          autoCorrect="off"
           spellCheck={false}
           autoComplete="off"
           onChange={(e) => {
@@ -179,6 +181,9 @@ export function RuleFields({ value, onChange, seriesOptions, seasons, hideSeries
           <input
             id={id}
             type="text"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
             value={value.release_group ?? ''}
             onChange={(e) => set('release_group', e.target.value === '' ? null : e.target.value)}
             placeholder="DKB"
@@ -248,6 +253,9 @@ export function SimulateBox({ rule, defaultTitle = '' }: { rule: RuleIn; default
           id={inputId}
           type="text"
           className="grow"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => {

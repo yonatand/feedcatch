@@ -5,6 +5,7 @@ import type { Episode, MetadataProvider, MetadataProviderName, SearchResult, Sea
 import { formatAirDate, pad2, percent } from '../lib/format';
 import { providerLabel, safeUrl } from '../lib/metadata';
 import { seasonToIn } from '../lib/series';
+import { useIsMobile } from '../lib/useMedia';
 import { ConfirmInline } from './ConfirmInline';
 import { DeleteDownloadButton } from './DownloadsTable';
 import { ErrorBanner, Notice } from './ErrorBanner';
@@ -58,6 +59,115 @@ function TitleEditor({ seasonId, ep, onDone }: { seasonId: number; ep: Episode; 
       </button>
       <ErrorBanner error={upd.error} title="Could not save title" />
     </div>
+  );
+}
+
+type DrawerReq = { episode: number | null; reuse: boolean };
+
+type RowProps = {
+  ep: Episode;
+  seasonId: number;
+  sLabel: string;
+  cands: number;
+  editing: boolean;
+  setEditing: (n: number | null) => void;
+  openDrawer: (d: DrawerReq) => void;
+};
+
+function EpisodeTitle({ ep, seasonId, editing, setEditing }: Pick<RowProps, 'ep' | 'seasonId' | 'editing' | 'setEditing'>) {
+  if (editing) return <TitleEditor seasonId={seasonId} ep={ep} onDone={() => setEditing(null)} />;
+  return (
+    <>
+      {ep.title ? ep.title : <span className="muted">Episode {ep.episode_number}</span>}
+      {ep.source === 'manual' ? (
+        <>
+          {' '}
+          <Badge tone="grey" title="Edited by hand; metadata refreshes never overwrite it">
+            manual
+          </Badge>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function EpisodeDownloadLine({ ep }: { ep: Episode }) {
+  if (!ep.download) return null;
+  return (
+    <div className="small muted truncate ep-download" title={ep.download.entry_title}>
+      <Link to={`/releases/${ep.download.entry_id}`}>{ep.download.entry_title}</Link>
+      {ep.download.status === 'failed' ? (
+        <>
+          {' '}
+          <StatusBadge status="failed" />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function EpisodeActions({ ep, sLabel, cands, editing, setEditing, openDrawer }: Omit<RowProps, 'seasonId'>) {
+  return (
+    <div className="actions">
+      <button
+        type="button"
+        className="btn btn-sm"
+        aria-label={`Search releases for episode ${ep.episode_number}`}
+        onClick={() => openDrawer({ episode: ep.episode_number, reuse: false })}
+      >
+        Search
+      </button>
+      {cands > 0 && !HAVE.has(ep.status) ? (
+        <button
+          type="button"
+          className="btn btn-sm btn-primary"
+          aria-label={`Grab episode ${ep.episode_number} (${cands} candidate${cands === 1 ? '' : 's'} from the last search)`}
+          onClick={() => openDrawer({ episode: ep.episode_number, reuse: true })}
+        >
+          Grab
+        </button>
+      ) : null}
+      {!editing ? (
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost"
+          aria-label={`Edit title of episode ${ep.episode_number}`}
+          onClick={() => setEditing(ep.episode_number)}
+        >
+          Edit title
+        </button>
+      ) : null}
+      {ep.download ? <DeleteDownloadButton id={ep.download.id} what={`${sLabel}E${pad2(ep.episode_number)}`} /> : null}
+    </div>
+  );
+}
+
+/** Mobile: one card per episode (number + title on top, air date/status line, actions at the bottom). */
+function EpisodeCard(p: RowProps) {
+  const { ep } = p;
+  return (
+    <li className="mcard ep-card">
+      <div className="mcard-title">
+        <span className="mono ep-num">E{pad2(ep.episode_number)}</span>{' '}
+        <span className="ep-title">
+          <EpisodeTitle ep={ep} seasonId={p.seasonId} editing={p.editing} setEditing={p.setEditing} />
+        </span>
+      </div>
+      <div className="mcard-meta">
+        <EpisodeStatusBadge ep={ep} />
+        {ep.air_date ? (
+          <span className="small">
+            <span title={absoluteTime(ep.air_date)}>{formatAirDate(ep.air_date)}</span> · <TimeAgo iso={ep.air_date} />
+          </span>
+        ) : (
+          <span className="small muted">no air date</span>
+        )}
+      </div>
+      <EpisodeDownloadLine ep={ep} />
+      <div className="mcard-actions">
+        <EpisodeActions {...p} />
+      </div>
+    </li>
   );
 }
 
@@ -237,7 +347,8 @@ export function SeasonEpisodesCard({ series, season, providers }: { series: Seri
   const eps = useEpisodes(season.id);
   const refresh = useRefreshEpisodes();
   const { state: sl, update, warnings } = useSeasonLink(season);
-  const [drawer, setDrawer] = useState<{ episode: number | null; reuse: boolean } | null>(null);
+  const [drawer, setDrawer] = useState<DrawerReq | null>(null);
+  const mobile = useIsMobile();
   const [lastResult, setLastResult] = useState<SearchResult | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [offset, setOffset] = useState<number | null>(null);
@@ -326,6 +437,26 @@ export function SeasonEpisodesCard({ series, season, providers }: { series: Seri
         <Spinner />
       ) : !linked && !hasEpisodes ? null : (
         <>
+          {mobile ? (
+            items.length === 0 ? (
+              <p className="mcards-empty muted">No episodes known yet. Use “Refresh metadata” to fetch them.</p>
+            ) : (
+              <ul className="mcards episodes-cards">
+                {page.map((ep) => (
+                  <EpisodeCard
+                    key={ep.episode_number}
+                    ep={ep}
+                    seasonId={season.id}
+                    sLabel={sLabel}
+                    cands={known.get(ep.episode_number) ?? 0}
+                    editing={editing === ep.episode_number}
+                    setEditing={setEditing}
+                    openDrawer={setDrawer}
+                  />
+                ))}
+              </ul>
+            )
+          ) : (
           <TableWrap>
             <table className="table table-compact episodes-table">
               <thead>
@@ -349,32 +480,8 @@ export function SeasonEpisodesCard({ series, season, providers }: { series: Seri
                     <tr key={ep.episode_number}>
                       <td className="num nowrap">E{pad2(ep.episode_number)}</td>
                       <td className="title-cell">
-                        {editing === ep.episode_number ? (
-                          <TitleEditor seasonId={season.id} ep={ep} onDone={() => setEditing(null)} />
-                        ) : (
-                          <>
-                            {ep.title ? ep.title : <span className="muted">Episode {ep.episode_number}</span>}
-                            {ep.source === 'manual' ? (
-                              <>
-                                {' '}
-                                <Badge tone="grey" title="Edited by hand; metadata refreshes never overwrite it">
-                                  manual
-                                </Badge>
-                              </>
-                            ) : null}
-                            {ep.download ? (
-                              <div className="small muted truncate" title={ep.download.entry_title}>
-                                <Link to={`/releases/${ep.download.entry_id}`}>{ep.download.entry_title}</Link>
-                                {ep.download.status === 'failed' ? (
-                                  <>
-                                    {' '}
-                                    <StatusBadge status="failed" />
-                                  </>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </>
-                        )}
+                        <EpisodeTitle ep={ep} seasonId={season.id} editing={editing === ep.episode_number} setEditing={setEditing} />
+                        {editing !== ep.episode_number ? <EpisodeDownloadLine ep={ep} /> : null}
                       </td>
                       <td className="nowrap">
                         {ep.air_date ? (
@@ -392,39 +499,14 @@ export function SeasonEpisodesCard({ series, season, providers }: { series: Seri
                         <EpisodeStatusBadge ep={ep} />
                       </td>
                       <td>
-                        <div className="actions">
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            aria-label={`Search releases for episode ${ep.episode_number}`}
-                            onClick={() => setDrawer({ episode: ep.episode_number, reuse: false })}
-                          >
-                            Search
-                          </button>
-                          {cands > 0 && !HAVE.has(ep.status) ? (
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-primary"
-                              aria-label={`Grab episode ${ep.episode_number} (${cands} candidate${cands === 1 ? '' : 's'} from the last search)`}
-                              onClick={() => setDrawer({ episode: ep.episode_number, reuse: true })}
-                            >
-                              Grab
-                            </button>
-                          ) : null}
-                          {editing !== ep.episode_number ? (
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-ghost"
-                              aria-label={`Edit title of episode ${ep.episode_number}`}
-                              onClick={() => setEditing(ep.episode_number)}
-                            >
-                              Edit title
-                            </button>
-                          ) : null}
-                          {ep.download ? (
-                            <DeleteDownloadButton id={ep.download.id} what={`${sLabel}E${pad2(ep.episode_number)}`} />
-                          ) : null}
-                        </div>
+                        <EpisodeActions
+                          ep={ep}
+                          sLabel={sLabel}
+                          cands={cands}
+                          editing={editing === ep.episode_number}
+                          setEditing={setEditing}
+                          openDrawer={setDrawer}
+                        />
                       </td>
                     </tr>
                   );
@@ -432,6 +514,7 @@ export function SeasonEpisodesCard({ series, season, providers }: { series: Seri
               </tbody>
             </table>
           </TableWrap>
+          )}
           {items.length > PAGE ? <Pagination total={items.length} limit={PAGE} offset={off} onChange={setOffset} /> : null}
         </>
       )}

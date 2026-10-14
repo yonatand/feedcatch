@@ -15,7 +15,7 @@ Full requirements: `docs/requirements.md` (source of truth for scope).
 - `.claude/rules/architecture.md`   data model, pipeline, decisions already made. Do not re-decide.
 - `.claude/rules/api-contract.md`   exact HTTP API. Frontend and backend both follow it.
 - `.claude/rules/safety-invariants.md`  hard constraints (no media access, no secrets in logs, path safety, SSRF).
-- `.claude/rules/backend.md` / `.claude/rules/frontend.md`  conventions per side.
+- `.claude/rules/backend.md` / `.claude/rules/frontend.md`  conventions per side; `.claude/rules/mobile.md`  phone layout rules.
 - `.claude/rules/metadata.md`  pluggable metadata providers (AniList, TMDB), seeding/onboarding; `anilist.md` keeps the AniList API facts.
 - `.claude/rules/episodes.md`  episode lists, release search (historic episodes), calendar, wanted.
 - `.claude/rules/verification.md`  what must pass before claiming done.

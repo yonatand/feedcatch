@@ -68,12 +68,12 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
         </FormField>
         <FormField label="Season folder format" help="Tokens: {season}, {season:02d}, {season:03d}, {series}.">
           {(id) => (
-            <input id={id} type="text" className="mono" value={v.season_folder_format ?? ''} onChange={(e) => set('season_folder_format', e.target.value)} />
+            <input id={id} type="text" className="mono" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={v.season_folder_format ?? ''} onChange={(e) => set('season_folder_format', e.target.value)} />
           )}
         </FormField>
         <FormField label="Category override">
           {(id) => (
-            <input id={id} type="text" value={v.category_override ?? ''} onChange={(e) => set('category_override', e.target.value === '' ? null : e.target.value)} />
+            <input id={id} type="text" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={v.category_override ?? ''} onChange={(e) => set('category_override', e.target.value === '' ? null : e.target.value)} />
           )}
         </FormField>
         <FormField label="Series path override" help="Optional absolute path as seen by qBittorrent." className="span-2">
@@ -82,6 +82,9 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
               id={id}
               type="text"
               className="mono"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               value={v.path_override ?? ''}
               onChange={(e) => set('path_override', e.target.value === '' ? null : e.target.value)}
             />
@@ -318,15 +321,19 @@ function SeasonsCard({ series }: { series: Series }) {
             {seasons.map((s) => (
               <Fragment key={s.id}>
                 <tr>
-                  <td className="nowrap">
+                  <td className="nowrap cell-main">
                     <strong>S{String(s.season_number).padStart(2, '0')}</strong>
                   </td>
-                  <td>
+                  <td data-label="Monitored">
                     <StatusBadge status={s.monitored ? 'monitored' : 'unmonitored'} />
                   </td>
-                  <td className="nowrap">{rangeText(s.episode_min, s.episode_max)}</td>
-                  <td className="nowrap">{rangeText(s.absolute_min, s.absolute_max)}</td>
-                  <td>
+                  <td className="nowrap" data-label="Episodes">
+                    {rangeText(s.episode_min, s.episode_max)}
+                  </td>
+                  <td className="nowrap" data-label="Absolute">
+                    {rangeText(s.absolute_min, s.absolute_max)}
+                  </td>
+                  <td className="cell-wide" data-label="Computed save path">
                     <code className="path-sm">{s.computed_save_path}</code>
                     {s.path_override ? (
                       <>
@@ -335,13 +342,14 @@ function SeasonsCard({ series }: { series: Series }) {
                       </>
                     ) : null}
                   </td>
-                  <td>
+                  <td className="cell-actions">
                     <div className="actions">
                       <button type="button" className="btn btn-sm" onClick={() => setEditing(editing === s.id ? null : s.id)}>
                         {editing === s.id ? 'Close' : 'Edit'}
                       </button>
                       <ConfirmInline
                         label="Delete"
+                        ariaLabel={`Delete season ${s.season_number}`}
                         confirmLabel="Delete season"
                         message="Rules bound to it are removed too."
                         pending={del.isPending && del.variables === s.id}
@@ -352,7 +360,7 @@ function SeasonsCard({ series }: { series: Series }) {
                 </tr>
                 {editing === s.id ? (
                   <tr className="detail-row">
-                    <td colSpan={6}>
+                    <td colSpan={6} className="cell-wide">
                       <SeasonEditor series={series} initial={seasonToIn(s)} seasonId={s.id} onDone={() => setEditing(null)} />
                     </td>
                   </tr>
@@ -428,18 +436,22 @@ function RulesCard({ series }: { series: Series }) {
               {items.map((r) => (
                 <Fragment key={r.id}>
                   <tr>
-                    <td className="title-cell">
+                    <td className="title-cell cell-main">
                       <strong>{r.name}</strong>
                       <div>
                         <RuleSummary r={r} />
                       </div>
                     </td>
-                    <td className="nowrap">{r.season_number !== null ? `S${String(r.season_number).padStart(2, '0')}` : 'any'}</td>
-                    <td className="num">{r.priority}</td>
-                    <td>
+                    <td className="nowrap" data-label="Season">
+                      {r.season_number !== null ? `S${String(r.season_number).padStart(2, '0')}` : 'any'}
+                    </td>
+                    <td className="num" data-label="Priority">
+                      {r.priority}
+                    </td>
+                    <td data-label="Enabled">
                       <StatusBadge status={r.enabled ? 'enabled' : 'disabled'} />
                     </td>
-                    <td>
+                    <td className="cell-actions">
                       <div className="actions">
                         <button type="button" className="btn btn-sm" onClick={() => setEditing(editing === r.id ? null : r.id)}>
                           {editing === r.id ? 'Close' : 'Edit'}
@@ -463,20 +475,20 @@ function RulesCard({ series }: { series: Series }) {
                         >
                           {testRecent.isPending && tested === r.id ? 'Testing…' : 'Test recent'}
                         </button>
-                        <ConfirmInline label="Delete" confirmLabel="Delete rule" pending={del.isPending && del.variables === r.id} onConfirm={() => del.mutate(r.id)} />
+                        <ConfirmInline label="Delete" ariaLabel={`Delete rule ${r.name}`} confirmLabel="Delete rule" pending={del.isPending && del.variables === r.id} onConfirm={() => del.mutate(r.id)} />
                       </div>
                     </td>
                   </tr>
                   {editing === r.id ? (
                     <tr className="detail-row">
-                      <td colSpan={5}>
+                      <td colSpan={5} className="cell-wide">
                         <RuleForm initial={r} defaultSeriesId={series.id} seasonsFor={seasonsFor} onDone={() => setEditing(null)} />
                       </td>
                     </tr>
                   ) : null}
                   {tested === r.id && (testRecent.data || testRecent.error) && !testRecent.isPending ? (
                     <tr className="detail-row">
-                      <td colSpan={5}>
+                      <td colSpan={5} className="cell-wide">
                         <div className="detail-head">
                           <strong className="small">Test against the 100 most recent stored releases (no side effects)</strong>
                           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setTested(null)}>
@@ -521,8 +533,8 @@ function PathsCard({ seriesId }: { seriesId: number }) {
               {(paths.data?.items ?? []).length === 0 ? <EmptyRow colSpan={2}>No seasons.</EmptyRow> : null}
               {(paths.data?.items ?? []).map((p) => (
                 <tr key={p.season_id}>
-                  <td className="nowrap">S{String(p.season_number).padStart(2, '0')}</td>
-                  <td>
+                  <td className="nowrap cell-main">S{String(p.season_number).padStart(2, '0')}</td>
+                  <td className="cell-wide" data-label="Save path">
                     <code className="path-sm">{p.save_path}</code>
                   </td>
                 </tr>

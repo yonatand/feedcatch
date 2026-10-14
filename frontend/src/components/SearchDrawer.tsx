@@ -4,6 +4,7 @@ import { ApiError } from '../api/client';
 import { useGrabMissing, useSeasonSearch } from '../api/hooks';
 import type { Candidate, EpisodeStatus, SearchRejected, SearchResult } from '../api/types';
 import { formatBytes, pad2 } from '../lib/format';
+import { useIsMobile } from '../lib/useMedia';
 import { ConditionsTable } from './ConditionsTable';
 import { Drawer } from './Drawer';
 import { ErrorBanner, Notice } from './ErrorBanner';
@@ -57,11 +58,7 @@ function CandidateRows({ g, seasonId, open, setOpen }: { g: Group; seasonId: num
       <tr className="group-row">
         <th colSpan={6} scope="rowgroup">
           <span className="group-row-inner">
-            <strong>E{pad2(g.episode)}</strong> <StatusBadge status={g.status} />
-            {g.alreadyHave ? <Badge tone="blue">already have</Badge> : null}
-            <span className="muted small">
-              {g.candidates.length} candidate{g.candidates.length === 1 ? '' : 's'}
-            </span>
+            <GroupHead g={g} />
           </span>
         </th>
       </tr>
@@ -133,6 +130,115 @@ function CandidateRows({ g, seasonId, open, setOpen }: { g: Group; seasonId: num
   );
 }
 
+function GroupHead({ g }: { g: Group }) {
+  return (
+    <>
+      <strong>E{pad2(g.episode)}</strong> <StatusBadge status={g.status} />
+      {g.alreadyHave ? <Badge tone="blue">already have</Badge> : null}
+      <span className="muted small">
+        {g.candidates.length} candidate{g.candidates.length === 1 ? '' : 's'}
+      </span>
+    </>
+  );
+}
+
+/** Mobile: one section per episode, one card per candidate; the grab flow opens inside the card. */
+function CandidateCards({ groups, seasonId, open, setOpen }: { groups: Group[]; seasonId: number; open: string | null; setOpen: (k: string | null) => void }) {
+  // The review's own Cancel closes it; only after a successful send (no Cancel left) is a Close shown, at the bottom.
+  const [sent, setSent] = useState<string | null>(null);
+  const toggle = (k: string | null) => {
+    setSent(null);
+    setOpen(k);
+  };
+  return (
+    <div className="cand-groups">
+      {groups.map((g) => (
+        <section key={g.episode} className="cand-group" aria-label={`Episode ${g.episode}`}>
+          <div className="cand-group-head">
+            <GroupHead g={g} />
+          </div>
+          <ul className="mcards">
+            {g.candidates.map((c) => {
+              const k = candKey(c);
+              const e = c.entry;
+              const passed = c.conditions.filter((x) => x.passed).length;
+              const noLink = !e.magnet_url && !e.torrent_url;
+              return (
+                <li key={k} className={`mcard${open === k ? ' mcard-open' : ''}`}>
+                  <div className="mcard-title break">
+                    <Link to={`/releases/${e.id}`}>{e.title}</Link>
+                  </div>
+                  <div className="mcard-meta">
+                    {e.parsed.group ? <Badge tone="purple">{e.parsed.group}</Badge> : null}
+                    {e.parsed.resolution ? <Badge>{e.parsed.resolution}</Badge> : null}
+                    <span className="small">{formatBytes(e.size_bytes)}</span>
+                    <span className="small">
+                      <TimeAgo iso={e.published_at} fallback="unknown" />
+                    </span>
+                    <span className="small muted">{e.feed_name}</span>
+                  </div>
+                  <div className="mcard-body">
+                    <div className="small">
+                      Rule: <strong>{c.rule_name}</strong>
+                    </div>
+                    <details className="cond-details">
+                      <summary className="small">
+                        {passed}/{c.conditions.length} conditions
+                      </summary>
+                      <ConditionsTable conditions={c.conditions} compact />
+                    </details>
+                    {c.save_path ? (
+                      <code className="path-sm break" title="qBittorrent save path">
+                        {c.save_path}
+                      </code>
+                    ) : (
+                      <span className="small muted">save path computed on grab</span>
+                    )}
+                  </div>
+                  {open !== k ? (
+                    <div className="mcard-actions">
+                      <button
+                        type="button"
+                        className={`btn${g.alreadyHave ? '' : ' btn-primary'}`}
+                        disabled={noLink}
+                        title={noLink ? 'No magnet or .torrent link' : undefined}
+                        aria-expanded={false}
+                        onClick={() => toggle(k)}
+                      >
+                        {noLink ? 'No torrent link' : 'Grab'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mcard-detail">
+                      {g.alreadyHave ? (
+                        <Notice kind="info">This episode is already downloaded, downloading or pending; the preview will show the duplicate.</Notice>
+                      ) : null}
+                      <GrabFlow
+                        entryId={e.id}
+                        target={{ season_id: seasonId, episode_number: c.episode_number }}
+                        autoPreview
+                        onCancel={() => toggle(null)}
+                        onSent={() => setSent(k)}
+                      />
+                      {sent === k ? (
+                        <div className="form-actions">
+                          <button type="button" className="btn btn-ghost" onClick={() => toggle(null)}>
+                            Close
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function sxe(r: SearchRejected): string {
   if (r.episode_number === null) return r.season_number === null ? '—' : `S${pad2(r.season_number)}`;
   return `${r.season_number === null ? '' : `S${pad2(r.season_number)}`}E${pad2(r.episode_number)}`;
@@ -152,23 +258,52 @@ function RejectedRow({ r }: { r: SearchRejected }) {
       </td>
       <td className="nowrap">{sxe(r)}</td>
       <td>
-        {r.failed_checks.length === 0 ? (
-          <span className="small muted">no enabled rule</span>
-        ) : (
-          <ul className="plain-list small rejected-checks">
-            {r.failed_checks.map((f, i) => (
-              <li key={`${f.rule_name}-${i}`} className="break">
-                <strong>{f.rule_name}</strong> · <span className="mono">{f.check}</span>: {f.detail}
-              </li>
-            ))}
-          </ul>
-        )}
+        <RejectedChecks r={r} />
       </td>
     </tr>
   );
 }
 
+function RejectedChecks({ r }: { r: SearchRejected }) {
+  return r.failed_checks.length === 0 ? (
+    <span className="small muted">no enabled rule</span>
+  ) : (
+    <ul className="plain-list small rejected-checks">
+      {r.failed_checks.map((f, i) => (
+        <li key={`${f.rule_name}-${i}`} className="break">
+          <strong>{f.rule_name}</strong> · <span className="mono">{f.check}</span>: {f.detail}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function RejectedTable({ rows }: { rows: readonly SearchRejected[] }) {
+  const mobile = useIsMobile();
+  if (mobile) {
+    return (
+      <ul className="mcards rejected-cards">
+        {rows.map((r) => (
+          <li key={r.entry_id} className="mcard">
+            <div className="mcard-title break">
+              <Link to={`/releases/${r.entry_id}`}>{r.title}</Link>
+            </div>
+            <div className="mcard-meta">
+              <span className="mono small">{sxe(r)}</span>
+              <span className="small muted break">
+                parsed as: <span className="mono">{r.parsed_title || '—'}</span>
+                {r.alt_titles.length > 0 ? <> · aka {r.alt_titles.join(' / ')}</> : null}
+              </span>
+            </div>
+            <div className="mcard-body">
+              <div className="mcard-label">Why rejected</div>
+              <RejectedChecks r={r} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <TableWrap>
       <table className="table table-compact rejected-table">
@@ -239,6 +374,7 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
   const queryId = useId();
   const search = useSeasonSearch();
   const grabMissing = useGrabMissing();
+  const mobile = useIsMobile();
   const [query, setQuery] = useState('');
   const [usedQuery, setUsedQuery] = useState('');
   const [result, setResult] = useState<SearchResult | null>(initialResult);
@@ -276,8 +412,41 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
   const planned = groups.filter((g) => GRABBABLE.has(g.status) && !g.alreadyHave && g.candidates.length > 0);
   const noTemplate = search.error instanceof ApiError && search.error.status === 400;
 
+  const startGrabAll = () => {
+    grabMissing.reset();
+    setConfirmAll(true);
+  };
+  const sendGrabAll = () =>
+    grabMissing.mutate({ seasonId, body: usedQuery ? { query: usedQuery } : {} }, { onSuccess: () => setConfirmAll(false) });
+
+  // Mobile: the primary action lives in the sheet's sticky footer (desktop keeps it inline in the body).
+  // Nothing to grab: no footer, so the sheet keeps its full height for the candidates.
+  // A grab review open in a card brings its own Confirm/Cancel: no second sticky bar under it.
+  const footer = result && open === null && (confirmAll || planned.length > 0) ? (
+    confirmAll ? (
+      <>
+        <button type="button" className="btn btn-primary" disabled={grabMissing.isPending} onClick={sendGrabAll}>
+          {grabMissing.isPending ? 'Sending…' : `Confirm: send ${planned.length} to qBittorrent`}
+        </button>
+        <button type="button" className="btn btn-ghost" disabled={grabMissing.isPending} onClick={() => setConfirmAll(false)}>
+          Cancel
+        </button>
+      </>
+    ) : (
+      <button
+        type="button"
+        className="btn btn-primary"
+        disabled={planned.length === 0 || grabMissing.isPending}
+        title={planned.length === 0 ? 'No missing episode has a candidate' : undefined}
+        onClick={startGrabAll}
+      >
+        Grab all missing ({planned.length})
+      </button>
+    )
+  ) : null;
+
   return (
-    <Drawer title={`Search releases: ${title}`} onClose={onClose} wide>
+    <Drawer title={`Search releases: ${title}`} onClose={onClose} wide footer={footer} footerMobileOnly>
       <p className="small muted">
         Searches every enabled feed that has a search URL template, then evaluates the results against this series’ enabled rules (monitoring is ignored:
         searching is explicit). Found releases are stored as “searched” and never auto-grabbed; nothing is sent until you confirm.
@@ -373,13 +542,10 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
             {!confirmAll ? (
               <button
                 type="button"
-                className="btn"
+                className="btn d-only"
                 disabled={planned.length === 0 || grabMissing.isPending}
                 title={planned.length === 0 ? 'No missing episode has a candidate' : undefined}
-                onClick={() => {
-                  grabMissing.reset();
-                  setConfirmAll(true);
-                }}
+                onClick={startGrabAll}
               >
                 Grab all missing ({planned.length})
               </button>
@@ -405,9 +571,11 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
                   <tbody>
                     {planned.map((g) => (
                       <tr key={g.episode}>
-                        <td className="nowrap">E{pad2(g.episode)}</td>
-                        <td className="title-cell">{g.candidates[0].entry.title}</td>
-                        <td>
+                        <td className="nowrap" data-label="Ep">
+                          E{pad2(g.episode)}
+                        </td>
+                        <td className="title-cell cell-main">{g.candidates[0].entry.title}</td>
+                        <td className="cell-wide" data-label="Save path">
                           {g.candidates[0].save_path ? <code className="path-sm break">{g.candidates[0].save_path}</code> : <span className="muted">—</span>}
                         </td>
                       </tr>
@@ -415,18 +583,8 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
                   </tbody>
                 </table>
               </TableWrap>
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={grabMissing.isPending}
-                  onClick={() =>
-                    grabMissing.mutate(
-                      { seasonId, body: usedQuery ? { query: usedQuery } : {} },
-                      { onSuccess: () => setConfirmAll(false) },
-                    )
-                  }
-                >
+              <div className="form-actions d-only">
+                <button type="button" className="btn btn-primary" disabled={grabMissing.isPending} onClick={sendGrabAll}>
                   {grabMissing.isPending ? 'Sending…' : `Confirm: send ${planned.length} to qBittorrent`}
                 </button>
                 <button type="button" className="btn btn-ghost" disabled={grabMissing.isPending} onClick={() => setConfirmAll(false)}>
@@ -478,6 +636,8 @@ export function SearchDrawer({ seasonId, title, episode = null, initialResult = 
                   ? 'No release passed your rules. Open the list below to see why each fetched release was rejected.'
                   : 'No matching releases found. Check the rule filters (group, resolution, keywords) or try a custom query.'}
             </p>
+          ) : mobile ? (
+            <CandidateCards groups={visible} seasonId={seasonId} open={open} setOpen={setOpen} />
           ) : (
             <TableWrap>
               <table className="table search-table">

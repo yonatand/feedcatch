@@ -8,11 +8,13 @@ import { Cover } from '../components/Cover';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { Pagination } from '../components/Pagination';
 import { SearchDrawer } from '../components/SearchDrawer';
+import { MobileActionBar } from '../components/MobileActionBar';
 import { LoadingBlock, Spinner } from '../components/Spinner';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyRow, PageHeader, TableWrap } from '../components/Table';
 import { TimeAgo } from '../components/TimeAgo';
 import { formatAirDate, seasonEpisode } from '../lib/format';
+import { useIsMobile } from '../lib/useMedia';
 
 const LIMIT = 50;
 
@@ -38,12 +40,16 @@ function SearchAllSummary({ seasons }: { seasons: SearchAllSeason[] }) {
             <tbody>
               {seasons.map((s) => (
                 <tr key={s.season_id}>
-                  <td className="title-cell">
+                  <td className="title-cell cell-main">
                     {s.series_name} <span className="mono small">{seasonEpisode(s.season_number, null)}</span>
                   </td>
-                  <td className="num">{s.grabbed}</td>
-                  <td className="num">{s.skipped}</td>
-                  <td className="break">{s.errors.length ? <span className="err-text small">{s.errors.join('; ')}</span> : <span className="muted">—</span>}</td>
+                  <td className="num" data-label="Grabbed">
+                    {s.grabbed}
+                  </td>
+                  <td className="num" data-label="Skipped">
+                    {s.skipped}
+                  </td>
+                  <td className="break cell-grow" data-label="Errors">{s.errors.length ? <span className="err-text small">{s.errors.join('; ')}</span> : <span className="muted">—</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -51,6 +57,51 @@ function SearchAllSummary({ seasons }: { seasons: SearchAllSeason[] }) {
         </TableWrap>
       ) : null}
     </div>
+  );
+}
+
+/** Mobile card list: cover + series/episode on top, air date and status, a full-width Search button. */
+function WantedCards({ items, onSearch }: { items: CalendarItem[]; onSearch: (it: CalendarItem) => void }) {
+  if (items.length === 0) {
+    return (
+      <p className="mcards-empty muted">
+        Nothing wanted. Missing episodes show up here once monitored seasons are linked to metadata and an aired episode has no download.
+      </p>
+    );
+  }
+  return (
+    <ul className="mcards wanted-cards">
+      {items.map((it) => (
+        <li key={`${it.season_id}-${it.episode_number}`} className="mcard">
+          <div className="mcard-head">
+            <Cover url={it.cover_url} alt={it.series_name} size="xs" />
+            <div className="mcard-head-main">
+              <div className="mcard-title">
+                <Link to={`/series/${it.series_id}`}>{it.series_name}</Link>{' '}
+                <span className="mono small">{seasonEpisode(it.season_number, it.episode_number)}</span>
+              </div>
+              <div className="small muted break">{it.title ?? `Episode ${it.episode_number}`}</div>
+            </div>
+          </div>
+          <div className="mcard-meta">
+            <StatusBadge status={it.status} />
+            <span className="small">
+              aired {formatAirDate(it.air_date)} · <TimeAgo iso={it.air_date} />
+            </span>
+          </div>
+          <div className="mcard-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              aria-label={`Search releases for ${it.series_name} ${seasonEpisode(it.season_number, it.episode_number)}`}
+              onClick={() => onSearch(it)}
+            >
+              Search
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -62,24 +113,27 @@ export default function Wanted() {
   const items = wanted.data?.items ?? [];
   const total = wanted.data?.total ?? 0;
   const running = searchAll.error instanceof ApiError && searchAll.error.status === 409;
+  const mobile = useIsMobile();
+  const searchAllButton = (
+    <ConfirmInline
+      label="Search all"
+      confirmLabel="Search & grab"
+      message="Search every season with missing episodes (up to 10) and send the best match per missing episode to qBittorrent?"
+      danger={false}
+      size="md"
+      disabled={total === 0}
+      pending={searchAll.isPending}
+      onConfirm={() => searchAll.mutate()}
+    />
+  );
 
   return (
     <>
       <PageHeader
         title="Wanted"
         subtitle="Aired episodes of monitored seasons with nothing downloaded, newest first. Search finds them through the feeds’ search URL templates."
-        actions={
-          <ConfirmInline
-            label="Search all"
-            confirmLabel="Search & grab"
-            message="Search every season with missing episodes (up to 10) and send the best match per missing episode to qBittorrent?"
-            danger={false}
-            size="md"
-            disabled={total === 0}
-            pending={searchAll.isPending}
-            onConfirm={() => searchAll.mutate()}
-          />
-        }
+        actionsInBar
+        actions={searchAllButton}
       />
       {searchAll.isPending ? <Spinner label="Searching… this can take a while (the server pauses between feed fetches)." /> : null}
       <ErrorBanner
@@ -93,6 +147,9 @@ export default function Wanted() {
         <LoadingBlock />
       ) : (
         <>
+          {mobile ? (
+            <WantedCards items={items} onSearch={setDrawer} />
+          ) : (
           <TableWrap>
             <table className="table">
               <thead>
@@ -153,6 +210,7 @@ export default function Wanted() {
               </tbody>
             </table>
           </TableWrap>
+          )}
           <Pagination total={total} limit={LIMIT} offset={offset} onChange={setOffset} disabled={wanted.isFetching} />
         </>
       )}
@@ -164,6 +222,7 @@ export default function Wanted() {
           onClose={() => setDrawer(null)}
         />
       ) : null}
+      <MobileActionBar>{searchAllButton}</MobileActionBar>
     </>
   );
 }

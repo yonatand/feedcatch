@@ -32,7 +32,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   };
 
   return (
-    <button type="button" className="btn btn-sm btn-ghost" onClick={() => void copy()}>
+    <button type="button" className="btn btn-sm btn-ghost copy-btn" onClick={() => void copy()}>
       {state === 'ok' ? 'Copied' : state === 'err' ? 'Copy failed' : label}
     </button>
   );

@@ -34,6 +34,9 @@ export function ListInput({ id, value, onChange, placeholder, disabled }: Props)
       placeholder={placeholder}
       disabled={disabled}
       autoComplete="off"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
       onChange={(e) => {
         setText(e.target.value);
         const next = splitList(e.target.value);

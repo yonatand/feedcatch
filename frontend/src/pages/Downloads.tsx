@@ -4,6 +4,7 @@ import { useDownloads, useRefreshStatus, useRetryDownload, useRetryFailed, useSe
 import type { DownloadStatus } from '../api/types';
 import { DeleteDownloadButton, DownloadsTable } from '../components/DownloadsTable';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
+import { MobileActionBar } from '../components/MobileActionBar';
 import { Pagination } from '../components/Pagination';
 import { LoadingBlock, Spinner } from '../components/Spinner';
 import { PageHeader } from '../components/Table';
@@ -23,6 +24,26 @@ export default function Downloads() {
   const retryFailed = useRetryFailed();
   const refresh = useRefreshStatus();
   const [message, setMessage] = useState<string | null>(null);
+  const refreshButton = (short: boolean) => (
+    <button
+      type="button"
+      className="btn"
+      disabled={refresh.isPending}
+      onClick={() => refresh.mutate(undefined, { onSuccess: (r) => setMessage(`Refreshed qBittorrent state for ${r.updated} download(s).`) })}
+    >
+      {refresh.isPending ? 'Refreshing…' : short ? 'Refresh status' : 'Refresh status from qBittorrent'}
+    </button>
+  );
+  const retryAllButton = (
+    <button
+      type="button"
+      className="btn"
+      disabled={retryFailed.isPending}
+      onClick={() => retryFailed.mutate(undefined, { onSuccess: (r) => setMessage(`Retried ${r.retried} failed download(s).`) })}
+    >
+      {retryFailed.isPending ? 'Retrying…' : 'Retry all failed'}
+    </button>
+  );
 
   const update = (patch: Record<string, string | undefined>) => {
     const next = new URLSearchParams(params);
@@ -39,24 +60,11 @@ export default function Downloads() {
       <PageHeader
         title="Downloads"
         subtitle="Torrents sent (or queued) to qBittorrent. qBittorrent owns them after submission; this app never pauses, moves or deletes torrents (deleting a row here only removes feedcatch's record). Refreshes every 15 s."
+        actionsInBar
         actions={
           <>
-            <button
-              type="button"
-              className="btn"
-              disabled={refresh.isPending}
-              onClick={() => refresh.mutate(undefined, { onSuccess: (r) => setMessage(`Refreshed qBittorrent state for ${r.updated} download(s).`) })}
-            >
-              {refresh.isPending ? 'Refreshing…' : 'Refresh status from qBittorrent'}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={retryFailed.isPending}
-              onClick={() => retryFailed.mutate(undefined, { onSuccess: (r) => setMessage(`Retried ${r.retried} failed download(s).`) })}
-            >
-              {retryFailed.isPending ? 'Retrying…' : 'Retry all failed'}
-            </button>
+            {refreshButton(false)}
+            {retryAllButton}
           </>
         }
       />
@@ -128,6 +136,10 @@ export default function Downloads() {
           <Pagination total={list.data?.total ?? 0} limit={LIMIT} offset={offset} disabled={list.isFetching} onChange={(o) => update({ offset: o === 0 ? undefined : String(o) })} />
         </>
       )}
+      <MobileActionBar>
+        {refreshButton(true)}
+        {retryAllButton}
+      </MobileActionBar>
     </>
   );
 }

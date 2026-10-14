@@ -94,18 +94,18 @@ export default function Activity() {
                 {items.length === 0 ? <EmptyRow colSpan={4}>No activity{level || eventType ? ' matches these filters' : ' yet'}.</EmptyRow> : null}
                 {items.map((ev) => (
                   <tr key={ev.id}>
-                    <td>
+                    <td data-label="When">
                       <TimeAgo iso={ev.ts} />
                     </td>
-                    <td>
+                    <td data-label="Level">
                       <StatusBadge status={ev.level} />
                     </td>
-                    <td className="nowrap">
+                    <td className="nowrap" data-label="Type">
                       <button type="button" className="link-btn mono small" onClick={() => setTypeText(ev.event_type)} title="Filter by this type">
                         {ev.event_type}
                       </button>
                     </td>
-                    <td className="title-cell">
+                    <td className="title-cell cell-main">
                       <div className="break">{ev.message}</div>
                       <div className="small">
                         {ev.entry_id !== null ? <Link to={`/releases/${ev.entry_id}`}>release #{ev.entry_id}</Link> : null}

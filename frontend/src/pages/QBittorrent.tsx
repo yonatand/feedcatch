@@ -160,12 +160,20 @@ export default function QBittorrent() {
           >
             <FormField label="Web UI URL" badge={<EnvBadge src={src('url')} />} help="e.g. http://host.docker.internal:8080 (reachable from this container).">
               {(id) => (
-                <input id={id} type="url" required value={f.url} disabled={isEnv('url')} onChange={(e) => set('url', e.target.value)} placeholder="http://host.docker.internal:8080" />
+                <input
+                  id={id}
+                  type="url"
+                  inputMode="url"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  required
+                  value={f.url} disabled={isEnv('url')} onChange={(e) => set('url', e.target.value)} placeholder="http://host.docker.internal:8080" />
               )}
             </FormField>
             <FormField label="Username" badge={<EnvBadge src={src('username')} />}>
               {(id) => (
-                <input id={id} type="text" autoComplete="username" value={f.username} disabled={isEnv('username')} onChange={(e) => set('username', e.target.value)} />
+                <input id={id} type="text" autoComplete="username" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={f.username} disabled={isEnv('username')} onChange={(e) => set('username', e.target.value)} />
               )}
             </FormField>
             <FormField
@@ -203,7 +211,7 @@ export default function QBittorrent() {
               />
             ) : null}
             <FormField label="Category" badge={<EnvBadge src={src('category')} />} help="Optional, e.g. anime. Avoid categories with their own save path.">
-              {(id) => <input id={id} type="text" value={f.category} disabled={isEnv('category')} onChange={(e) => set('category', e.target.value)} />}
+              {(id) => <input id={id} type="text" autoCapitalize="off" autoCorrect="off" value={f.category} disabled={isEnv('category')} onChange={(e) => set('category', e.target.value)} />}
             </FormField>
             <FormField label="Timeout (seconds)" badge={<EnvBadge src={src('timeout_seconds')} />}>
               {(id) => (

@@ -1,13 +1,28 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useDeleteRule, useRules, useSaveRule, useSeriesList } from '../api/hooks';
 import { ConfirmInline } from '../components/ConfirmInline';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
+import { MobileActionBar } from '../components/MobileActionBar';
 import { RuleForm, ruleToIn } from '../components/RuleForm';
 import { LoadingBlock } from '../components/Spinner';
 import { Badge, StatusBadge } from '../components/StatusBadge';
 import { Card, EmptyRow, PageHeader, TableWrap } from '../components/Table';
 import { sortSeasons } from '../lib/series';
+
+/** Scrolls itself into view on mount when it starts above the viewport (opened from the bottom action bar). */
+function ScrollIntoView({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: 'start' });
+  }, []);
+  return (
+    <div ref={ref} className="scroll-anchor">
+      {children}
+    </div>
+  );
+}
 
 export default function Rules() {
   const [params, setParams] = useSearchParams();
@@ -29,6 +44,7 @@ export default function Rules() {
       <PageHeader
         title="Rules"
         subtitle="Matching rules across all series. A rule only auto-grabs when it is enabled and its series (and bound season) is monitored."
+        actionsInBar
         actions={
           editing === null ? (
             <button type="button" className="btn btn-primary" disabled={seriesItems.length === 0} onClick={() => setEditing('new')}>
@@ -43,15 +59,17 @@ export default function Rules() {
         </Notice>
       ) : null}
       {editing === 'new' && seriesItems.length > 0 ? (
-        <Card title="New rule">
-          <RuleForm
-            initial={null}
-            defaultSeriesId={seriesId ?? seriesItems[0].id}
-            seriesOptions={seriesItems}
-            seasonsFor={seasonsFor}
-            onDone={() => setEditing(null)}
-          />
-        </Card>
+        <ScrollIntoView>
+          <Card title="New rule">
+            <RuleForm
+              initial={null}
+              defaultSeriesId={seriesId ?? seriesItems[0].id}
+              seriesOptions={seriesItems}
+              seasonsFor={seasonsFor}
+              onDone={() => setEditing(null)}
+            />
+          </Card>
+        </ScrollIntoView>
       ) : null}
       <div className="toolbar">
         <label htmlFor="rules-series" className="small">
@@ -95,10 +113,10 @@ export default function Rules() {
               {items.map((r) => (
                 <Fragment key={r.id}>
                   <tr>
-                    <td>
+                    <td className="cell-main">
                       <strong>{r.name}</strong>
                     </td>
-                    <td className="nowrap">
+                    <td className="nowrap" data-label="Series / season">
                       <Link to={`/series/${r.series_id}`}>{r.series_name}</Link>{' '}
                       <span className="muted">{r.season_number !== null ? `S${String(r.season_number).padStart(2, '0')}` : 'any season'}</span>
                       {monitoredById.get(r.series_id) === false ? (
@@ -107,7 +125,7 @@ export default function Rules() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="small">
+                    <td className="small cell-wide" data-label="Filters">
                       <span className="badges">
                         {r.release_group ? <Badge tone="blue">{r.require_group_prefix ? `[${r.release_group}] prefix` : r.release_group}</Badge> : null}
                         {r.resolutions.map((x) => (
@@ -139,11 +157,13 @@ export default function Rules() {
                         ) : null}
                       </span>
                     </td>
-                    <td className="num">{r.priority}</td>
-                    <td>
+                    <td className="num" data-label="Priority">
+                      {r.priority}
+                    </td>
+                    <td data-label="State">
                       <StatusBadge status={r.enabled ? 'enabled' : 'disabled'} />
                     </td>
-                    <td>
+                    <td className="cell-actions">
                       <div className="actions">
                         <button type="button" className="btn btn-sm" onClick={() => setEditing(editing === r.id ? null : r.id)}>
                           {editing === r.id ? 'Close' : 'Edit'}
@@ -156,13 +176,13 @@ export default function Rules() {
                         >
                           {r.enabled ? 'Disable' : 'Enable'}
                         </button>
-                        <ConfirmInline label="Delete" confirmLabel="Delete rule" pending={del.isPending && del.variables === r.id} onConfirm={() => del.mutate(r.id)} />
+                        <ConfirmInline label="Delete" ariaLabel={`Delete rule ${r.name}`} confirmLabel="Delete rule" pending={del.isPending && del.variables === r.id} onConfirm={() => del.mutate(r.id)} />
                       </div>
                     </td>
                   </tr>
                   {editing === r.id ? (
                     <tr className="detail-row">
-                      <td colSpan={6}>
+                      <td colSpan={6} className="cell-wide">
                         <RuleForm initial={r} defaultSeriesId={r.series_id} seriesOptions={seriesItems} seasonsFor={seasonsFor} onDone={() => setEditing(null)} />
                       </td>
                     </tr>
@@ -173,6 +193,13 @@ export default function Rules() {
           </table>
         </TableWrap>
       )}
+      {editing === null ? (
+        <MobileActionBar>
+          <button type="button" className="btn btn-primary" disabled={seriesItems.length === 0} onClick={() => setEditing('new')}>
+            Add rule
+          </button>
+        </MobileActionBar>
+      ) : null}
     </>
   );
 }
