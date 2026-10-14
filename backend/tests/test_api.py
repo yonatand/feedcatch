@@ -39,6 +39,29 @@ def _series(client: TestClient, name: str = "Frieren", **extra: Any) -> dict[str
     return r.json()
 
 
+def _bc_demo(client: TestClient, monitored: bool = False) -> dict[str, Any]:
+    """The former demo seed: Black Clover S2 + rule 'DKB 1080p' (the production seed no longer creates it)."""
+    body = {
+        "name": "Black Clover",
+        "aliases": ["Black.Clover", "Black_Clover"],
+        "monitored": monitored,
+        "seasons": [{"season_number": 2, "monitored": True}],
+    }
+    r = client.post("/api/series", json=body)
+    assert r.status_code == 201, r.text
+    series: dict[str, Any] = r.json()
+    rule = _rule_body(
+        series["id"],
+        series["seasons"][0]["id"],
+        name="DKB 1080p",
+        priority=10,
+        release_group="DKB",
+        require_group_prefix=True,
+    )
+    assert client.post("/api/rules", json=rule).status_code == 201
+    return series
+
+
 def _rule_body(series_id: int, season_id: int | None = None, **extra: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
         "series_id": series_id,
@@ -103,8 +126,8 @@ def test_dashboard(client: TestClient) -> None:
     r = client.get("/api/dashboard")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["counts"]["series_total"] == 1  # demo seed
-    assert body["feeds"][0]["name"] == "AnimeTosho"
+    assert body["counts"]["series_total"] == 0  # no demo seed
+    assert body["feeds"] == [] and body["upcoming"] == [] and body["counts"]["wanted"] == 0
     assert body["scheduler"] == {"running": False, "next_feed_poll_at": None}
     assert body["qbit"]["configured"] is False
 
@@ -169,7 +192,7 @@ def test_feeds_crud_and_ssrf(client: TestClient) -> None:
     )
 
     listing = client.get("/api/feeds").json()
-    assert listing["total"] == 2 and len(listing["items"]) == 2
+    assert listing["total"] == 1 and len(listing["items"]) == 1
 
     r = client.put(f"/api/feeds/{feed['id']}", json={**FEED_BODY, "name": "Renamed", "poll_interval_minutes": 30})
     assert r.status_code == 200 and r.json()["name"] == "Renamed" and r.json()["poll_interval_minutes"] == 30
@@ -247,7 +270,7 @@ def test_series_and_seasons_crud(client: TestClient) -> None:
     assert client.delete(f"/api/seasons/{season2['id']}").status_code == 204
     assert client.delete(f"/api/series/{s['id']}").status_code == 204
     assert client.get(f"/api/series/{s['id']}").status_code == 404
-    assert client.get("/api/series").json()["total"] == 1  # demo series remains
+    assert client.get("/api/series").json()["total"] == 0
 
 
 def test_preview_path(client: TestClient) -> None:
@@ -329,13 +352,7 @@ def test_simulate_saved_and_unsaved_series(client: TestClient) -> None:
 
 def _bc_setup(client: TestClient, respx_mock: respx.MockRouter) -> tuple[dict[str, Any], dict[str, Any], FakeQbit]:
     """Demo Black Clover (monitored) + feed polled once (historical) with an extra DKB S2E01 item."""
-    series = client.get("/api/series").json()["items"][0]
-    assert series["name"] == "Black Clover"
-    r = client.put(
-        f"/api/series/{series['id']}",
-        json={"name": "Black Clover", "aliases": series["aliases"], "monitored": True},
-    )
-    assert r.status_code == 200
+    series = _bc_demo(client, monitored=True)
     _configure_qbit(client)
     fake = FakeQbit(respx_mock)
     mock_feed(respx_mock, feed_with(make_item("[DKB] Black Clover Season 2 - 01 [1080p]", 1001)))
@@ -398,7 +415,7 @@ def test_entries_and_grab(client: TestClient, respx_mock: respx.MockRouter) -> N
 
 
 def test_grab_nzb_only_entry_400(client: TestClient, respx_mock: respx.MockRouter) -> None:
-    series = client.get("/api/series").json()["items"][0]
+    series = _bc_demo(client)
     mock_feed(respx_mock, feed_with(make_item("[DKB] Black Clover Season 2 - 02 [1080p]", 1002, magnet=False)))
     feed = client.post("/api/feeds", json=FEED_BODY).json()
     client.post(f"/api/feeds/{feed['id']}/poll")
@@ -453,6 +470,7 @@ def test_qbit_config_never_returns_password(client: TestClient, respx_mock: resp
 
 
 def test_settings_put(client: TestClient) -> None:
+    _bc_demo(client)
     current = client.get("/api/settings").json()
     assert current["media_base_path"] == "/home/qbittorrent-nox/media"
     payload = {k: v for k, v in current.items() if k not in ("sources", "warnings")}

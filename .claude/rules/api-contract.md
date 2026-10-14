@@ -162,3 +162,6 @@ Health
 
 ## AniList (added 2026-10-13)
 See `.claude/rules/anilist.md` for the AniList endpoints (`/api/anilist/search`, `/api/anilist/{id}`, `/api/anilist/{id}/suggest`, `PUT /api/series/{id}/anilist`) and the new `anilist_id` / `cover_url` / `anilist` fields on `Series` and `SeriesIn`.
+
+## Episodes, search, calendar, wanted (added 2026-10-14)
+See `.claude/rules/episodes.md` for `/api/seasons/{id}/episodes`, `/api/seasons/{id}/search`, `/api/calendar`, `/api/wanted`, and the new fields on Season, FeedSource, AppSettings and Dashboard.

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useDashboard } from '../api/hooks';
-import type { Dashboard as DashboardData } from '../api/types';
+import type { CalendarItem, Dashboard as DashboardData } from '../api/types';
+import { Cover } from '../components/Cover';
 import { DownloadsTable } from '../components/DownloadsTable';
 import { EntriesTable } from '../components/EntriesTable';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
@@ -8,6 +9,7 @@ import { LoadingBlock } from '../components/Spinner';
 import { Badge, StatusBadge } from '../components/StatusBadge';
 import { Card, EmptyRow, PageHeader, TableWrap } from '../components/Table';
 import { TimeAgo } from '../components/TimeAgo';
+import { seasonEpisode } from '../lib/format';
 
 function Stat({ label, value, to, tone }: { label: string; value: React.ReactNode; to?: string; tone?: 'bad' | 'warn' }) {
   const inner = (
@@ -80,6 +82,87 @@ function QbitCard({ qbit }: { qbit: DashboardData['qbit'] }) {
   );
 }
 
+function OnboardingCard({ data }: { data: DashboardData }) {
+  const steps = [
+    {
+      done: data.feeds.length > 0,
+      to: '/feeds',
+      title: 'Add a feed',
+      text: 'An RSS/Atom feed of releases. Presets: AnimeTosho or Nyaa (anime), or any custom feed.',
+    },
+    {
+      done: data.qbit.configured,
+      to: '/qbittorrent',
+      title: 'Connect qBittorrent',
+      text: 'Web API URL and credentials of your existing qBittorrent; test the connection.',
+    },
+    {
+      done: data.counts.series_total > 0,
+      to: '/series/new',
+      title: 'Add a series',
+      text: 'Search AniList (anime) or TMDB (TV), define seasons and a matching rule, then monitor it.',
+    },
+  ];
+  return (
+    <Card title="Get started">
+      <ol className="onboarding">
+        {steps.map((s, i) => (
+          <li key={s.to} className={s.done ? 'done' : ''}>
+            <span className="step-num" aria-hidden="true">
+              {s.done ? '✓' : i + 1}
+            </span>
+            <div>
+              <Link to={s.to}>
+                <strong>{s.title}</strong>
+              </Link>
+              {s.done ? <span className="sr-only"> (done)</span> : null}
+              <div className="small muted">{s.text}</div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+
+/** Short local weekday, date and time, e.g. "Sat 17 Oct, 17:00". */
+function upcomingLabel(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function UpcomingCard({ items }: { items: CalendarItem[] }) {
+  return (
+    <Card title="Upcoming (7 days)" actions={<Link to="/calendar">Calendar</Link>}>
+      {items.length === 0 ? (
+        <p className="muted small">No episodes of monitored series air in the next 7 days (or no season has episode metadata yet).</p>
+      ) : (
+        <ul className="cal-list">
+          {items.map((it) => (
+            <li key={`${it.season_id}-${it.episode_number}`} className="cal-row">
+              <Cover url={it.cover_url} alt={it.series_name} size="xs" />
+              <div className="cal-main">
+                <div>
+                  <Link to={`/series/${it.series_id}`}>{it.series_name}</Link>{' '}
+                  <span className="mono small">{seasonEpisode(it.season_number, it.episode_number)}</span>
+                </div>
+                <div className="small muted truncate">{it.title ?? `Episode ${it.episode_number}`}</div>
+              </div>
+              <div className="cal-side">
+                <span className="small nowrap">
+                  {upcomingLabel(it.air_date)} · <TimeAgo iso={it.air_date} />
+                </span>
+                <StatusBadge status={it.status} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 function SchedulerCard({ s }: { s: DashboardData['scheduler'] }) {
   return (
     <Card title="Scheduler">
@@ -107,6 +190,8 @@ export default function Dashboard() {
   if (!data) return <ErrorBanner error={error ?? 'No data'} title="Could not load dashboard" onRetry={() => void refetch()} />;
   const c = data.counts;
   const errorFeeds = data.feeds.filter((f) => f.enabled && f.last_status === 'error').length;
+  const onboarding = data.feeds.length === 0 || c.series_total === 0;
+  const wanted = c.wanted ?? 0;
 
   return (
     <>
@@ -117,6 +202,7 @@ export default function Dashboard() {
           {errorFeeds} enabled feed{errorFeeds > 1 ? 's are' : ' is'} failing. See <Link to="/feeds">Feeds</Link>.
         </Notice>
       ) : null}
+      {onboarding ? <OnboardingCard data={data} /> : null}
 
       <div className="stats">
         <Stat label="Series monitored" value={`${c.series_monitored} / ${c.series_total}`} to="/series" />
@@ -125,7 +211,10 @@ export default function Dashboard() {
         <Stat label="Sent to qBit (24 h)" value={c.downloads_submitted_24h} to="/downloads?status=submitted" />
         <Stat label="Pending" value={c.downloads_pending} to="/downloads?status=pending" tone={c.downloads_pending > 0 ? 'warn' : undefined} />
         <Stat label="Failed" value={c.downloads_failed} to="/downloads?status=failed" tone={c.downloads_failed > 0 ? 'bad' : undefined} />
+        <Stat label="Wanted episodes" value={wanted} to="/wanted" tone={wanted > 0 ? 'warn' : undefined} />
       </div>
+
+      <UpcomingCard items={data.upcoming ?? []} />
 
       <div className="grid-3">
         <Card title="Feed health" actions={<Link to="/feeds">Manage</Link>} className="span-1">

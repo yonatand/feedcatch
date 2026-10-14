@@ -17,7 +17,7 @@ from app.schemas import (
     ParsedReleaseOut,
     PollResultOut,
 )
-from app.services import activity, poller, scheduler, settings_store, ssrf
+from app.services import activity, poller, scheduler, search, settings_store, ssrf
 from app.services.feeds import FeedFetchError, ParsedEntry, fetch_feed
 
 router = APIRouter(prefix="/api/feeds", tags=["feeds"], dependencies=AUTH)
@@ -55,6 +55,17 @@ def _validate_url(db: Session, settings: Settings, url: str) -> str:
         raise HTTPException(status_code=400, detail=f"feed URL not allowed: {exc}") from exc
 
 
+def _validate_template(db: Session, settings: Settings, template: str | None) -> str | None:
+    if template is None:
+        return None
+    try:
+        return search.validate_template(template, settings_store.allow_private_feed_hosts(db, settings))
+    except ssrf.SsrfError as exc:
+        raise HTTPException(status_code=400, detail=f"search URL template not allowed: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"search_url_template: {exc}") from exc
+
+
 def _check_unique_url(db: Session, url: str, exclude_id: int | None = None) -> None:
     stmt = select(FeedSource.id).where(FeedSource.url == url)
     if exclude_id is not None:
@@ -82,6 +93,7 @@ def create_feed(
     body: FeedSourceIn, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
 ) -> FeedSourceOut:
     url = _validate_url(db, settings, body.url)
+    template = _validate_template(db, settings, body.search_url_template)
     _check_unique_url(db, url)
     feed = FeedSource(
         name=body.name,
@@ -89,6 +101,7 @@ def create_feed(
         enabled=body.enabled,
         poll_interval_minutes=body.poll_interval_minutes,
         backfill_mode=body.backfill_mode,
+        search_url_template=template,
     )
     db.add(feed)
     db.flush()
@@ -130,6 +143,7 @@ def update_feed(
 ) -> FeedSourceOut:
     feed = get_or_404(db, FeedSource, feed_id, "feed")
     url = _validate_url(db, settings, body.url)
+    template = _validate_template(db, settings, body.search_url_template)
     _check_unique_url(db, url, exclude_id=feed.id)
     if url != feed.url:
         # different feed content: forget conditional-GET state and treat the next poll as a first poll
@@ -141,6 +155,8 @@ def update_feed(
     feed.enabled = body.enabled
     feed.poll_interval_minutes = body.poll_interval_minutes
     feed.backfill_mode = body.backfill_mode
+    if "search_url_template" in body.model_fields_set:  # older clients omit it: keep the stored template
+        feed.search_url_template = template
     activity.log_event(db, "info", "feed_updated", f"Feed '{feed.name}' updated", details={"feed_id": feed.id})
     db.commit()
     scheduler.sync_feed_jobs(db)

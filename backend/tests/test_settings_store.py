@@ -115,29 +115,56 @@ def test_activity_log_and_purge(db: Session) -> None:
     assert [r.event_type for r in db.scalars(select(ActivityLog))] == ["test_event"]
 
 
-def test_seed_demo_idempotent(db: Session, settings: Settings) -> None:
-    assert seed.seed_demo(db, settings) is True
-    assert seed.seed_demo(db, settings) is False
-    feeds = db.scalars(select(FeedSource)).all()
-    assert [(f.name, f.url, f.backfill_mode, f.poll_interval_minutes) for f in feeds] == [
-        ("AnimeTosho", "https://feed.animetosho.net/rss2", "skip", 15)
-    ]
-    series = db.scalars(select(Series)).one()
-    assert series.name == "Black Clover" and series.monitored is False
-    assert series.aliases == ["Black.Clover", "Black_Clover"]
-    season = db.scalars(select(Season)).one()
-    assert season.season_number == 2 and season.absolute_min is None
-    rule = db.scalars(select(Rule)).one()
-    assert rule.release_group == "DKB" and rule.require_group_prefix and rule.resolutions == ["1080p"]
-    assert rule.season_id == season.id and rule.priority == 10
+def test_seed_creates_nothing_without_feed_url(db: Session, settings: Settings) -> None:
+    assert seed.seed_defaults(db, settings) is False
+    assert seed.seed_defaults(db, settings) is False
+    assert db.scalars(select(FeedSource)).all() == []
+    assert db.scalars(select(Series)).all() == [] and db.scalars(select(Season)).all() == []
+    assert db.scalars(select(Rule)).all() == []
     keys = set(db.scalars(select(SettingKV.key)))
-    assert {"media_base_path", "qbit_timeout_seconds", "demo_seeded"} <= keys
+    assert {"media_base_path", "qbit_timeout_seconds", "auto_search_missing", "search_interval_hours"} <= keys
+    assert settings_store.get(db, settings_store.AUTO_SEARCH_MISSING) is False
+    assert settings_store.get(db, settings_store.METADATA_REFRESH_HOURS) == 12
+    assert settings_store.get(db, settings_store.SEARCH_DELAY_SECONDS) == 3
 
 
-def test_seed_uses_feed_url_env(db: Session, settings: Settings) -> None:
+def test_seed_uses_feed_url_env_once(db: Session, settings: Settings) -> None:
     s = Settings(APP_DATA_DIR=settings.APP_DATA_DIR, FEED_URL="https://example.org/rss")
-    seed.seed_demo(db, s)
-    assert db.scalars(select(FeedSource.url)).one() == "https://example.org/rss"
+    assert seed.seed_defaults(db, s) is True
+    feed = db.scalars(select(FeedSource)).one()
+    assert (feed.name, feed.url, feed.search_url_template) == ("example.org", "https://example.org/rss", None)
+    db.delete(feed)
+    db.commit()
+    assert seed.seed_defaults(db, s) is False  # created once only (a deleted feed stays deleted)
+    assert db.scalars(select(FeedSource)).all() == []
+
+
+def test_seed_animetosho_feed_gets_search_template(db: Session, settings: Settings) -> None:
+    s = Settings(APP_DATA_DIR=settings.APP_DATA_DIR, FEED_URL="https://feed.animetosho.net/rss2")
+    seed.seed_defaults(db, s)
+    feed = db.scalars(select(FeedSource)).one()
+    assert feed.name == "feed.animetosho.net"
+    assert feed.search_url_template == "https://feed.animetosho.net/rss2?q={query}"
+    assert seed.search_template_for("https://feed.animetosho.net/rss2?only_tor=1") == (
+        "https://feed.animetosho.net/rss2?only_tor=1&q={query}"
+    )
+    assert seed.search_template_for("https://nyaa.si/?page=rss") is None
+
+
+def test_seed_backfills_animetosho_template_once(db: Session, settings: Settings) -> None:
+    feed = FeedSource(name="AnimeTosho", url="https://feed.animetosho.net/rss2")
+    other = FeedSource(name="Other", url="https://feed.animetosho.net/rss2?filter=x")
+    db.add_all([feed, other])
+    db.commit()
+    seed.seed_defaults(db, settings)
+    assert feed.search_url_template == "https://feed.animetosho.net/rss2?q={query}"
+    assert other.search_url_template is None  # exact URL match only
+    feed.search_url_template = None  # user cleared it deliberately
+    db.commit()
+    seed.seed_defaults(db, settings)
+    assert feed.search_url_template is None
+    events = [a.event_type for a in db.scalars(select(ActivityLog))]
+    assert events.count("feed_search_template_backfilled") == 1
 
 
 def test_schema_validators() -> None:

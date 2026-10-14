@@ -1,4 +1,6 @@
-"""AniList client, suggestion builder, API routes and migration 0002. All HTTP is mocked with respx."""
+"""AniList client/provider, suggestion builder, /api/metadata routes (anilist) and the metadata migration.
+
+All HTTP is mocked with respx."""
 
 from __future__ import annotations
 
@@ -16,14 +18,14 @@ from sqlalchemy.orm import Session
 
 from app.db import run_migrations
 from app.models import Series
-from app.services import anilist
-from app.services.anilist import (
+from app.services.metadata import anilist, build_suggestion
+from app.services.metadata.anilist import (
     ANILIST_URL,
     AnilistClient,
     AnilistError,
     AnilistMediaDetail,
-    build_suggestion,
     parse_media,
+    to_detail,
 )
 from tests.helpers import FIXTURES
 
@@ -208,33 +210,46 @@ def test_errors_are_not_cached(respx_mock: respx.MockRouter) -> None:
 
 
 def test_build_suggestion_black_clover() -> None:
-    s = build_suggestion(_detail_bc())
+    s = build_suggestion(to_detail(_detail_bc()))
     assert s.name == "Black Clover"
-    assert s.anilist_id == 97940
+    assert (s.provider, s.id) == ("anilist", "97940")
     # Hebrew/Thai/Russian synonyms and the native title are not aliases; romaji == english == name.
     assert s.aliases == []
     assert s.seasons == [
-        {"season_number": 1, "episode_min": None, "episode_max": 170, "absolute_min": None, "absolute_max": None}
+        {
+            "season_number": 1,
+            "monitored": True,
+            "path_override": None,
+            "episode_min": None,
+            "episode_max": 170,
+            "absolute_min": None,
+            "absolute_max": None,
+            "metadata_provider": "anilist",
+            "metadata_id": "97940",
+        }
     ]
     assert s.cover_url and s.cover_url.endswith("bx97940-fyh8o7gNbha0.png")
-    assert s.anilist == {
-        "title_romaji": "Black Clover",
-        "title_english": "Black Clover",
-        "title_native": "ブラッククローバー",
+    assert s.metadata == {
+        "provider": "anilist",
+        "id": "97940",
+        "title": "Black Clover",
+        "original_title": "ブラッククローバー",
+        "alt_titles": DETAIL["data"]["Media"]["synonyms"],  # non-Latin: kept as metadata, never aliases
+        "kind": "anime",
         "format": "TV",
         "status": "FINISHED",
-        "season_year": 2017,
+        "year": 2017,
         "episodes": 170,
         "site_url": "https://anilist.co/anime/97940",
     }
     ids = {r.id: r for r in s.related}
-    assert 195604 in ids and ids[195604].relation_type == "SEQUEL"
-    assert ids[195604].suggested_season_number == 2
-    assert 86123 not in ids and 100088 not in ids  # ADAPTATION (manga/novel)
-    assert 110318 not in ids  # SPIN_OFF
-    assert 106223 not in ids and 155017 not in ids  # OTHER
-    assert 87528 in ids and ids[87528].suggested_season_number is None  # ALTERNATIVE special
-    assert 131680 in ids  # SIDE_STORY movie
+    assert "195604" in ids and ids["195604"].relation_type == "SEQUEL"
+    assert ids["195604"].suggested_season_number == 2 and ids["195604"].provider == "anilist"
+    assert "86123" not in ids and "100088" not in ids  # ADAPTATION (manga/novel)
+    assert "110318" not in ids  # SPIN_OFF
+    assert "106223" not in ids and "155017" not in ids  # OTHER
+    assert "87528" in ids and ids["87528"].suggested_season_number is None  # ALTERNATIVE special
+    assert "131680" in ids  # SIDE_STORY movie
     assert {r.relation_type for r in s.related} <= anilist.RELATED_TYPES
 
 
@@ -260,11 +275,13 @@ def _media(**kw: Any) -> AnilistMediaDetail:
 
 def test_build_suggestion_sanitizes_name_and_filters_aliases() -> None:
     s = build_suggestion(
-        _media(
-            title_romaji="Re:Zero kara Hajimeru Isekai Seikatsu",
-            title_english="Re:ZERO -Starting Life in Another World-",
-            title_native="Re:ゼロから始める異世界生活",
-            synonyms=["re:zero kara hajimeru isekai seikatsu", "リゼロ", "Re: Zero", "Re/Zero?", "Рэ:Зеро"],
+        to_detail(
+            _media(
+                title_romaji="Re:Zero kara Hajimeru Isekai Seikatsu",
+                title_english="Re:ZERO -Starting Life in Another World-",
+                title_native="Re:ゼロから始める異世界生活",
+                synonyms=["re:zero kara hajimeru isekai seikatsu", "リゼロ", "Re: Zero", "Re/Zero?", "Рэ:Зеро"],
+            )
         )
     )
     assert s.name == "ReZERO -Starting Life in Another World-"
@@ -273,43 +290,62 @@ def test_build_suggestion_sanitizes_name_and_filters_aliases() -> None:
         "Re:Zero kara Hajimeru Isekai Seikatsu",
         "Re: Zero",
         "Re/Zero?",
+        "Re:ゼロから始める異世界生活",  # original title contains Latin letters -> kept
     ]
     assert s.seasons[0]["episode_max"] is None
     assert s.cover_url is None and s.related == []
 
 
 def test_build_suggestion_falls_back_to_romaji() -> None:
-    s = build_suggestion(_media(title_romaji="Petit Clover Advance", cover_medium="https://x.example.test/c.png"))
+    s = build_suggestion(
+        to_detail(_media(title_romaji="Petit Clover Advance", cover_medium="https://x.example.test/c.png"))
+    )
     assert s.name == "Petit Clover Advance" and s.aliases == []
     assert s.cover_url == "https://x.example.test/c.png"
 
 
-# ---------------------------------------------------------------- API
+# ---------------------------------------------------------------- API (/api/metadata with provider=anilist)
+
+MEDIA_RESULT_KEYS = {
+    "provider", "id", "title", "original_title", "alt_titles", "kind", "format", "status", "year", "episodes",
+    "cover_url", "site_url",
+}  # fmt: skip
+
+
+def test_api_providers(client: TestClient) -> None:
+    r = client.get("/api/metadata/providers")
+    assert r.status_code == 200
+    assert r.json() == {
+        "items": [
+            {"name": "anilist", "label": "AniList", "kind": "anime", "configured": True},
+            {"name": "tmdb", "label": "TMDB", "kind": "tv", "configured": False},
+        ]
+    }
 
 
 def test_api_search(client: TestClient, respx_mock: respx.MockRouter) -> None:
     respx_mock.post(ANILIST_URL).mock(return_value=httpx.Response(200, json=SEARCH))
-    r = client.get("/api/anilist/search", params={"q": "Black Clover", "limit": 3})
+    r = client.get("/api/metadata/search", params={"provider": "anilist", "q": "Black Clover", "limit": 3})
     assert r.status_code == 200, r.text
     items = r.json()["items"]
     assert len(items) == 3
-    assert set(items[0]) == {
-        "id", "title_romaji", "title_english", "title_native", "synonyms", "format", "status",
-        "season", "season_year", "episodes", "cover_medium", "cover_large", "site_url",
-    }  # fmt: skip
-    assert items[0]["id"] == 97940 and items[0]["episodes"] == 170
+    assert set(items[0]) == MEDIA_RESULT_KEYS
+    assert items[0]["id"] == "97940" and items[0]["episodes"] == 170 and items[0]["kind"] == "anime"
+    assert items[0]["title"] == "Black Clover" and items[0]["year"] == 2017
 
 
-def test_api_search_short_query(client: TestClient, respx_mock: respx.MockRouter) -> None:
+def test_api_search_bad_input(client: TestClient, respx_mock: respx.MockRouter) -> None:
     route = respx_mock.post(ANILIST_URL)
-    assert client.get("/api/anilist/search", params={"q": " a "}).status_code == 400
-    assert client.get("/api/anilist/search").status_code == 400
+    assert client.get("/api/metadata/search", params={"provider": "anilist", "q": " a "}).status_code == 400
+    assert client.get("/api/metadata/search", params={"provider": "anilist"}).status_code == 400
+    r = client.get("/api/metadata/search", params={"provider": "imdb", "q": "Black Clover"})
+    assert r.status_code == 400 and "unknown metadata provider" in r.json()["detail"]
     assert route.call_count == 0
 
 
 def test_api_search_rate_limited(client: TestClient, respx_mock: respx.MockRouter) -> None:
     respx_mock.post(ANILIST_URL).mock(return_value=httpx.Response(429, headers={"Retry-After": "12"}))
-    r = client.get("/api/anilist/search", params={"q": "Black Clover"})
+    r = client.get("/api/metadata/search", params={"provider": "anilist", "q": "Black Clover"})
     assert r.status_code == 429
     assert r.json() == {"detail": "AniList rate limit, retry in 12 s"}
     assert r.headers["Retry-After"] == "12"
@@ -317,31 +353,33 @@ def test_api_search_rate_limited(client: TestClient, respx_mock: respx.MockRoute
 
 def test_api_search_upstream_failure(client: TestClient, respx_mock: respx.MockRouter) -> None:
     respx_mock.post(ANILIST_URL).mock(return_value=httpx.Response(500))
-    r = client.get("/api/anilist/search", params={"q": "Black Clover"})
+    r = client.get("/api/metadata/search", params={"provider": "anilist", "q": "Black Clover"})
     assert r.status_code == 502
     assert "AniList" in r.json()["detail"]
 
 
 def test_api_detail_and_404(client: TestClient, respx_mock: respx.MockRouter) -> None:
     _route_by_kind(respx_mock)
-    r = client.get("/api/anilist/97940")
+    r = client.get("/api/metadata/anilist/97940")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["id"] == 97940 and len(body["related"]) == 8
+    assert set(body) == MEDIA_RESULT_KEYS | {"seasons", "related"}
+    assert body["id"] == "97940" and len(body["related"]) == 3  # filtered to season-worthy relations
+    assert body["seasons"] == [{"season_number": 1, "name": None, "episode_count": 170, "air_date": None}]
     assert set(body["related"][0]) == {
-        "relation_type", "id", "title_romaji", "title_english", "format", "episodes", "season_year", "status",
+        "relation_type", "provider", "id", "title", "format", "episodes", "year", "status",
         "suggested_season_number",
     }  # fmt: skip
-    r = client.get("/api/anilist/424242")
-    assert r.status_code == 404
+    assert client.get("/api/metadata/anilist/424242").status_code == 404
+    assert client.get("/api/metadata/anilist/abc").status_code == 404
 
 
 def test_api_suggest(client: TestClient, respx_mock: respx.MockRouter) -> None:
     _route_by_kind(respx_mock)
-    r = client.get("/api/anilist/97940/suggest")
+    r = client.get("/api/metadata/anilist/97940/suggest")
     assert r.status_code == 200, r.text
     s = r.json()
-    assert set(s) == {"anilist_id", "name", "aliases", "cover_url", "anilist", "seasons", "related"}
+    assert set(s) == {"provider", "id", "name", "aliases", "cover_url", "metadata", "seasons", "related"}
     assert s["name"] == "Black Clover" and s["aliases"] == []
     assert s["seasons"] == [
         {
@@ -352,90 +390,122 @@ def test_api_suggest(client: TestClient, respx_mock: respx.MockRouter) -> None:
             "episode_max": 170,
             "absolute_min": None,
             "absolute_max": None,
+            "metadata_provider": "anilist",
+            "metadata_id": "97940",
         }
     ]
-    assert s["anilist"]["site_url"] == "https://anilist.co/anime/97940"
-    assert any(x["id"] == 195604 and x["relation_type"] == "SEQUEL" for x in s["related"])
+    assert s["metadata"]["site_url"] == "https://anilist.co/anime/97940"
+    assert any(x["id"] == "195604" and x["relation_type"] == "SEQUEL" for x in s["related"])
     assert all(x["relation_type"] != "ADAPTATION" for x in s["related"])
-    assert client.get("/api/anilist/424242/suggest").status_code == 404
+    assert client.get("/api/metadata/anilist/424242/suggest").status_code == 404
 
 
 def test_api_suggest_then_create_series_round_trip(client: TestClient, respx_mock: respx.MockRouter) -> None:
     _route_by_kind(respx_mock)
-    s = client.get("/api/anilist/97940/suggest").json()
+    s = client.get("/api/metadata/anilist/97940/suggest").json()
     body = {
         "name": "Black Clover AniList",
         "aliases": s["aliases"],
-        "anilist_id": s["anilist_id"],
+        "metadata_provider": s["provider"],
+        "metadata_id": s["id"],
         "cover_url": s["cover_url"],
-        "anilist": s["anilist"],
+        "metadata": s["metadata"],
         "seasons": s["seasons"],
     }
     r = client.post("/api/series", json=body)
     assert r.status_code == 201, r.text
     out = r.json()
-    assert out["anilist_id"] == 97940 and out["cover_url"] == s["cover_url"]
-    assert out["anilist"]["episodes"] == 170
-    assert out["seasons"][0]["episode_max"] == 170
-    # same anilist_id on a second series -> 409
+    assert out["metadata_provider"] == "anilist" and out["metadata_id"] == "97940"
+    assert out["cover_url"] == s["cover_url"] and out["metadata"]["episodes"] == 170
+    season = out["seasons"][0]
+    assert season["episode_max"] == 170
+    assert (season["metadata_provider"], season["metadata_id"]) == ("anilist", "97940")
+    # the best-effort episode refresh got the (fixture) episodes response and stored the episodes
+    assert season["episode_count"] == 170 and season["warnings"] == []
+    # same link on a second series -> 409
     body["name"] = "Another"
     assert client.post("/api/series", json=body).status_code == 409
-    # a PUT that omits the AniList fields keeps the link (older clients)
+    # a PUT that omits the metadata fields keeps the link (older clients)
     r = client.put(f"/api/series/{out['id']}", json={"name": "Black Clover AniList", "aliases": ["BC"]})
     assert r.status_code == 200
-    assert r.json()["anilist_id"] == 97940 and r.json()["anilist"] is not None
-    # a PUT that echoes the current AniList fields back (e.g. a Monitor toggle) is not a self-conflict
+    assert r.json()["metadata_id"] == "97940" and r.json()["metadata"] is not None
+    # a PUT that echoes the current metadata fields back (e.g. a Monitor toggle) is not a self-conflict
     cur = r.json()
-    echo = {k: cur[k] for k in ("name", "aliases", "anilist_id", "cover_url", "anilist")} | {"monitored": False}
+    keys = ("name", "aliases", "metadata_provider", "metadata_id", "cover_url", "metadata")
+    echo = {k: cur[k] for k in keys} | {"monitored": False}
     r = client.put(f"/api/series/{out['id']}", json=echo)
     assert r.status_code == 200, r.text
-    assert r.json()["monitored"] is False and r.json()["anilist_id"] == 97940
-    assert r.json()["anilist"] == cur["anilist"] and r.json()["cover_url"] == cur["cover_url"]
+    assert r.json()["monitored"] is False and r.json()["metadata_id"] == "97940"
+    assert r.json()["metadata"] == cur["metadata"] and r.json()["cover_url"] == cur["cover_url"]
 
 
-def test_series_without_anilist_has_null_fields(client: TestClient) -> None:
+def test_series_without_metadata_has_null_fields(client: TestClient) -> None:
     r = client.post("/api/series", json={"name": "Plain"})
     assert r.status_code == 201
     out = r.json()
-    assert out["anilist_id"] is None and out["cover_url"] is None and out["anilist"] is None
+    assert out["metadata_provider"] is None and out["metadata_id"] is None
+    assert out["cover_url"] is None and out["metadata"] is None
 
 
-def test_series_rejects_non_http_cover(client: TestClient) -> None:
+def test_series_rejects_bad_metadata_input(client: TestClient) -> None:
     r = client.post("/api/series", json={"name": "X", "cover_url": "javascript:alert(1)"})
     assert r.status_code == 400
     assert "cover_url" in r.json()["detail"]
+    assert client.post("/api/series", json={"name": "X", "metadata_provider": "anilist"}).status_code == 422
+    r = client.post("/api/series", json={"name": "X", "metadata_provider": "anilist", "metadata_id": "1 2/3"})
+    assert r.status_code == 400 and "metadata_id" in r.json()["detail"]
 
 
 def test_api_link_and_unlink(client: TestClient, respx_mock: respx.MockRouter) -> None:
     route = _route_by_kind(respx_mock, {97940: DETAIL})
     sid = client.post("/api/series", json={"name": "BC", "aliases": ["Black Clover TV", "black clover"]}).json()["id"]
-    r = client.put(f"/api/series/{sid}/anilist", json={"anilist_id": 97940})
+    r = client.put(f"/api/series/{sid}/metadata", json={"provider": "anilist", "id": "97940"})
     assert r.status_code == 200, r.text
     out = r.json()
     assert out["name"] == "BC"  # never renamed
     assert out["aliases"] == ["Black Clover TV", "black clover"]  # existing kept; "Black Clover" dup (case) skipped
-    assert out["anilist_id"] == 97940
+    assert (out["metadata_provider"], out["metadata_id"]) == ("anilist", "97940")
     assert out["cover_url"].startswith("https://s4.anilist.co/")
-    assert out["anilist"]["title_romaji"] == "Black Clover" and out["anilist"]["episodes"] == 170
+    assert out["metadata"]["title"] == "Black Clover" and out["metadata"]["episodes"] == 170
     assert route.call_count == 1
 
-    # another series cannot take the same id
+    # another series cannot take the same link
     other = client.post("/api/series", json={"name": "Other"}).json()["id"]
-    r = client.put(f"/api/series/{other}/anilist", json={"anilist_id": 97940})
+    r = client.put(f"/api/series/{other}/metadata", json={"provider": "anilist", "id": 97940})
     assert r.status_code == 409
     assert route.call_count == 1  # conflict is checked before calling AniList
 
     # re-linking the same series to the same id is fine (cached)
-    assert client.put(f"/api/series/{sid}/anilist", json={"anilist_id": 97940}).status_code == 200
+    assert client.put(f"/api/series/{sid}/metadata", json={"provider": "anilist", "id": "97940"}).status_code == 200
 
-    # unlink clears the three fields, aliases untouched
-    r = client.put(f"/api/series/{sid}/anilist", json={"anilist_id": None})
+    # unlink clears the fields, aliases untouched
+    r = client.put(f"/api/series/{sid}/metadata", json={"provider": None, "id": None})
     assert r.status_code == 200
     out = r.json()
-    assert out["anilist_id"] is None and out["cover_url"] is None and out["anilist"] is None
+    assert out["metadata_id"] is None and out["cover_url"] is None and out["metadata"] is None
     assert out["aliases"] == ["Black Clover TV", "black clover"]
     # now the other series may take it
-    assert client.put(f"/api/series/{other}/anilist", json={"anilist_id": 97940}).status_code == 200
+    r = client.put(f"/api/series/{other}/metadata", json={"provider": "anilist", "id": "97940"})
+    assert r.status_code == 200
+    assert client.put(f"/api/series/{other}/metadata", json={"provider": "anilist", "id": None}).status_code == 422
+
+
+def test_api_link_sets_empty_season_one(client: TestClient, respx_mock: respx.MockRouter) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "airingSchedule" in json.loads(request.content)["query"]:
+            return httpx.Response(503)
+        return httpx.Response(200, json=DETAIL)
+
+    route = respx_mock.post(ANILIST_URL).mock(side_effect=handler)
+    body = {"name": "BC", "seasons": [{"season_number": 1}, {"season_number": 2}]}
+    sid = client.post("/api/series", json=body).json()["id"]
+    out = client.put(f"/api/series/{sid}/metadata", json={"provider": "anilist", "id": "97940"}).json()
+    s1, s2 = out["seasons"]
+    assert (s1["metadata_provider"], s1["metadata_id"]) == ("anilist", "97940")
+    assert s2["metadata_provider"] is None  # only season 1 for AniList
+    # the episodes query fails upstream -> best-effort refresh becomes a warning, the link still succeeds
+    assert route.call_count == 2
+    assert s1["warnings"] and "episode metadata could not be fetched" in s1["warnings"][0]
 
 
 def test_api_link_merges_new_aliases(client: TestClient, respx_mock: respx.MockRouter) -> None:
@@ -443,9 +513,8 @@ def test_api_link_merges_new_aliases(client: TestClient, respx_mock: respx.MockR
     raw["data"]["Media"]["synonyms"].append("Burakku Kurōbā")
     raw["data"]["Media"]["title"]["english"] = "Black Clover (TV)"
     _route_by_kind(respx_mock, {97940: raw})
-    # (the demo seed already owns the name "Black Clover")
     sid = client.post("/api/series", json={"name": "Clover", "aliases": ["BC"]}).json()["id"]
-    out = client.put(f"/api/series/{sid}/anilist", json={"anilist_id": 97940}).json()
+    out = client.put(f"/api/series/{sid}/metadata", json={"provider": "anilist", "id": "97940"}).json()
     assert out["name"] == "Clover"
     assert out["aliases"] == ["BC", "Black Clover (TV)", "Black Clover", "Burakku Kurōbā"]
 
@@ -453,48 +522,64 @@ def test_api_link_merges_new_aliases(client: TestClient, respx_mock: respx.MockR
 def test_api_link_errors(client: TestClient, respx_mock: respx.MockRouter) -> None:
     _route_by_kind(respx_mock, {})
     sid = client.post("/api/series", json={"name": "BC"}).json()["id"]
-    assert client.put(f"/api/series/{sid}/anilist", json={"anilist_id": 5}).status_code == 404
-    assert client.put("/api/series/9999/anilist", json={"anilist_id": None}).status_code == 404
+    assert client.put(f"/api/series/{sid}/metadata", json={"provider": "anilist", "id": "5"}).status_code == 404
+    assert client.put("/api/series/9999/metadata", json={"provider": None, "id": None}).status_code == 404
+    r = client.put(f"/api/series/{sid}/metadata", json={"provider": "tmdb", "id": "1399"})
+    assert r.status_code == 400 and r.json()["detail"] == "TMDB API key not configured"
     respx_mock.routes.clear()
     respx_mock.post(ANILIST_URL).mock(return_value=httpx.Response(429, headers={"Retry-After": "3"}))
-    r = client.put(f"/api/series/{sid}/anilist", json={"anilist_id": 6})
+    r = client.put(f"/api/series/{sid}/metadata", json={"provider": "anilist", "id": "6"})
     assert r.status_code == 429 and r.json()["detail"] == "AniList rate limit, retry in 3 s"
     got = client.get(f"/api/series/{sid}").json()
-    assert got["anilist_id"] is None
+    assert got["metadata_id"] is None
 
 
-def test_anilist_requires_auth(auth_client: TestClient, respx_mock: respx.MockRouter) -> None:
-    assert auth_client.get("/api/anilist/search", params={"q": "Black Clover"}).status_code == 401
-    assert auth_client.get("/api/anilist/97940").status_code == 401
-    assert auth_client.get("/api/anilist/97940/suggest").status_code == 401
-    assert auth_client.put("/api/series/1/anilist", json={"anilist_id": None}).status_code == 401
+def test_metadata_requires_auth(auth_client: TestClient, respx_mock: respx.MockRouter) -> None:
+    assert auth_client.get("/api/metadata/providers").status_code == 401
+    assert auth_client.get("/api/metadata/search", params={"q": "Black Clover"}).status_code == 401
+    assert auth_client.get("/api/metadata/anilist/97940").status_code == 401
+    assert auth_client.get("/api/metadata/anilist/97940/suggest").status_code == 401
+    assert auth_client.put("/api/series/1/metadata", json={"provider": None, "id": None}).status_code == 401
+    assert auth_client.get("/api/anilist/search", params={"q": "x"}).status_code in (401, 404)
 
 
 # ---------------------------------------------------------------- migration
 
 
-def test_migration_adds_columns_and_unique_index(db_url: str) -> None:
+def test_migration_generic_metadata_columns(db_url: str) -> None:
     run_migrations(db_url)
     engine = create_engine(db_url)
     try:
         insp = inspect(engine)
         cols = {c["name"]: c for c in insp.get_columns("series")}
-        for name in ("anilist_id", "cover_url", "anilist_json"):
+        for name in ("metadata_provider", "metadata_id", "cover_url", "metadata_json"):
             assert name in cols and cols[name]["nullable"], name
+        assert "anilist_id" not in cols and "anilist_json" not in cols
         idx = {i["name"]: i for i in insp.get_indexes("series")}
-        assert idx["ux_series_anilist_id"]["unique"]
-        assert idx["ux_series_anilist_id"]["column_names"] == ["anilist_id"]
+        assert idx["ux_series_metadata"]["unique"]
+        assert idx["ux_series_metadata"]["column_names"] == ["metadata_provider", "metadata_id"]
+        season_cols = {c["name"] for c in insp.get_columns("seasons")}
+        assert {"metadata_provider", "metadata_id", "metadata_refreshed_at"} <= season_cols
     finally:
         engine.dispose()
 
 
-def test_anilist_id_unique_but_nulls_allowed(db: Session) -> None:
+def test_metadata_link_unique_but_nulls_allowed(db: Session) -> None:
     db.add_all([Series(name="A", aliases=[]), Series(name="B", aliases=[])])
-    db.add(Series(name="C", aliases=[], anilist_id=97940, anilist={"title_romaji": "Black Clover"}))
+    db.add(
+        Series(
+            name="C",
+            aliases=[],
+            metadata_provider="anilist",
+            metadata_id="97940",
+            metadata_info={"title": "Black Clover"},
+        )
+    )
+    db.add(Series(name="T", aliases=[], metadata_provider="tmdb", metadata_id="97940"))  # other provider: fine
     db.flush()
     with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(Series(name="D", aliases=[], anilist_id=97940))
+        db.add(Series(name="D", aliases=[], metadata_provider="anilist", metadata_id="97940"))
         db.flush()
     db.expire_all()
     c = db.query(Series).filter_by(name="C").one()
-    assert c.anilist == {"title_romaji": "Black Clover"}
+    assert c.metadata_info == {"title": "Black Clover"}

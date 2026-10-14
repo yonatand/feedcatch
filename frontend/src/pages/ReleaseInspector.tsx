@@ -1,19 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ApiError } from '../api/client';
-import { useEntry, useEvaluateEntry, useGrabConfirm, useGrabPreview, useSeriesList } from '../api/hooks';
-import type { Download, Evaluation, FeedEntryDetail, GrabPreview } from '../api/types';
+import { useEntry, useEvaluateEntry, useSeriesList } from '../api/hooks';
+import type { Evaluation, FeedEntryDetail } from '../api/types';
 import { ConditionsTable } from '../components/ConditionsTable';
-import { ConfirmInline } from '../components/ConfirmInline';
 import { CopyButton } from '../components/CopyButton';
 import { DownloadsTable } from '../components/DownloadsTable';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
-import { CheckField, FormField } from '../components/FormField';
+import { FormField } from '../components/FormField';
+import { GrabFlow, type GrabTarget } from '../components/GrabFlow';
 import { NumberInput } from '../components/NumberInput';
 import { ParsedTable } from '../components/ParsedBadges';
-import { PathPreview } from '../components/PathPreview';
 import { LoadingBlock } from '../components/Spinner';
-import { Badge, StatusBadge } from '../components/StatusBadge';
+import { StatusBadge } from '../components/StatusBadge';
 import { Card, PageHeader } from '../components/Table';
 import { TimeAgo } from '../components/TimeAgo';
 import { formatBytes, seasonEpisode, truncateMiddle } from '../lib/format';
@@ -102,70 +100,13 @@ function EvaluationBlock({ ev }: { ev: Evaluation }) {
   );
 }
 
-function GrabResult({ d }: { d: Download }) {
-  return (
-    <Notice kind={d.status === 'failed' ? 'error' : d.status === 'path_mismatch' ? 'warning' : 'success'}>
-      Download #{d.id}: <StatusBadge status={d.status} /> {d.last_error ? <span>— {d.last_error}</span> : null}{' '}
-      <Link to="/downloads">View downloads →</Link>
-    </Notice>
-  );
-}
-
-function PreviewView({ p }: { p: GrabPreview }) {
-  return (
-    <div className="grab-preview">
-      <PathPreview path={p.save_path} label="Will be sent with savepath" note />
-      <dl className="kv">
-        <div className="kv-row">
-          <dt>Category</dt>
-          <dd>{p.category ?? <span className="muted">none</span>}</dd>
-        </div>
-        <div className="kv-row">
-          <dt>Source</dt>
-          <dd>
-            <Badge tone="green">{p.source_url_kind}</Badge>{' '}
-            <code className="path-sm" title={p.source_url}>
-              {truncateMiddle(p.source_url, 64)}
-            </code>{' '}
-            <CopyButton text={p.source_url} />
-          </dd>
-        </div>
-        <div className="kv-row">
-          <dt>Infohash</dt>
-          <dd>{p.infohash ? <code className="path-sm">{p.infohash}</code> : <span className="muted">unknown</span>}</dd>
-        </div>
-      </dl>
-      {p.warnings.length > 0 ? (
-        <Notice kind="warning">
-          <ul className="plain-list">
-            {p.warnings.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </Notice>
-      ) : null}
-      {p.duplicate_of ? (
-        <Notice kind="warning">
-          <strong>Duplicate:</strong> download #{p.duplicate_of.id} ({p.duplicate_of.entry_title}) already covers{' '}
-          {p.duplicate_of.series_name} {seasonEpisode(p.duplicate_of.season_number, p.duplicate_of.episode_number)} with status{' '}
-          <StatusBadge status={p.duplicate_of.status} />.
-        </Notice>
-      ) : null}
-    </div>
-  );
-}
-
 function GrabCard({ e }: { e: FeedEntryDetail }) {
   const seriesList = useSeriesList();
-  const previewM = useGrabPreview();
-  const confirmM = useGrabConfirm();
   const matched = e.evaluations.filter((ev) => ev.matched && ev.season_id !== null);
   const [mode, setMode] = useState<'match' | 'manual'>(matched.length > 0 ? 'match' : 'manual');
   const [matchIdx, setMatchIdx] = useState(0);
   const [seasonId, setSeasonId] = useState<number | null>(null);
   const [episode, setEpisode] = useState<number | null>(e.parsed.absolute ? null : e.parsed.episode);
-  const [force, setForce] = useState(false);
-  const [result, setResult] = useState<Download | null>(null);
 
   const allSeasons = useMemo(
     () =>
@@ -175,7 +116,7 @@ function GrabCard({ e }: { e: FeedEntryDetail }) {
     [seriesList.data],
   );
 
-  const chosen: { season_id: number; episode_number: number } | null =
+  const chosen: GrabTarget | null =
     mode === 'match'
       ? matched[matchIdx] && matched[matchIdx].season_id !== null && matched[matchIdx].episode_number !== null
         ? { season_id: matched[matchIdx].season_id as number, episode_number: matched[matchIdx].episode_number as number }
@@ -184,31 +125,7 @@ function GrabCard({ e }: { e: FeedEntryDetail }) {
         ? { season_id: seasonId, episode_number: episode }
         : null;
 
-  // Any change to the target invalidates a shown preview.
-  const key = chosen ? `${chosen.season_id}:${chosen.episode_number}` : '';
-  useEffect(() => {
-    previewM.reset();
-    confirmM.reset();
-    setForce(false);
-  }, [key]);
-
   const noLink = !e.magnet_url && !e.torrent_url;
-  const preview = previewM.data;
-  const dup = preview?.duplicate_of ?? null;
-  const conflict = confirmM.error instanceof ApiError && confirmM.error.status === 409;
-
-  const send = () => {
-    if (!chosen) return;
-    confirmM.mutate(
-      { entryId: e.id, body: { ...chosen, force: dup !== null && force } },
-      {
-        onSuccess: (d) => {
-          setResult(d);
-          previewM.reset();
-        },
-      },
-    );
-  };
 
   return (
     <Card title="Manual grab">
@@ -219,7 +136,6 @@ function GrabCard({ e }: { e: FeedEntryDetail }) {
           {e.is_historical ? (
             <Notice kind="info">This is a historical entry (seen on the first poll). It was never auto-grabbed; a manual grab is allowed.</Notice>
           ) : null}
-          {result ? <GrabResult d={result} /> : null}
           <div className="segmented" role="radiogroup" aria-label="Target">
             <label className={mode === 'match' ? 'active' : ''}>
               <input type="radio" name="grab-mode" checked={mode === 'match'} disabled={matched.length === 0} onChange={() => setMode('match')} />
@@ -273,61 +189,7 @@ function GrabCard({ e }: { e: FeedEntryDetail }) {
               No seasons defined. <Link to="/series/new">Create a series</Link> first.
             </Notice>
           ) : null}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn"
-              disabled={!chosen || previewM.isPending}
-              onClick={() => {
-                if (!chosen) return;
-                setResult(null);
-                previewM.mutate({ entryId: e.id, body: { ...chosen, force: false } });
-              }}
-            >
-              {previewM.isPending ? 'Preparing…' : 'Grab — preview first'}
-            </button>
-          </div>
-          <ErrorBanner error={previewM.error} title="Preview failed" />
-          {preview ? (
-            <div className="subcard">
-              <h3>Review before sending</h3>
-              <PreviewView p={preview} />
-              {dup ? (
-                <div className="force-box">
-                  <CheckField
-                    label={<strong>Force grab despite the duplicate</strong>}
-                    checked={force}
-                    onChange={setForce}
-                    help="qBittorrent will receive a second torrent for the same episode. Existing torrents are not removed or changed."
-                  />
-                </div>
-              ) : null}
-              <ErrorBanner
-                error={conflict ? 'Rejected as a duplicate (409). Tick “Force grab” to send anyway.' : confirmM.error}
-                title="Send failed"
-              />
-              <div className="form-actions">
-                {dup ? (
-                  <ConfirmInline
-                    label="Force send to qBittorrent"
-                    confirmLabel="Yes, send duplicate"
-                    message="Send a duplicate torrent?"
-                    size="md"
-                    disabled={!force}
-                    pending={confirmM.isPending}
-                    onConfirm={send}
-                  />
-                ) : (
-                  <button type="button" className="btn btn-primary" disabled={confirmM.isPending} onClick={send}>
-                    {confirmM.isPending ? 'Sending…' : 'Confirm send to qBittorrent'}
-                  </button>
-                )}
-                <button type="button" className="btn btn-ghost" onClick={() => previewM.reset()}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <GrabFlow entryId={e.id} target={chosen} />
         </>
       )}
     </Card>

@@ -14,6 +14,13 @@ const TONES: Record<string, Tone> = {
   duplicate: 'blue',
   historical: 'purple',
   unprocessed: 'yellow',
+  searched: 'grey',
+  // episode status (pending shares the download tone above)
+  downloaded: 'green',
+  downloading: 'blue',
+  missing: 'orange',
+  unaired: 'purple',
+  unknown: 'grey',
   // feed status
   ok: 'green',
   error: 'red',

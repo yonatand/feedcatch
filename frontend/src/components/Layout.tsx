@@ -9,6 +9,8 @@ const NAV: { to: string; label: string; end?: boolean }[] = [
   { to: '/series', label: 'Series' },
   { to: '/rules', label: 'Rules' },
   { to: '/releases', label: 'Releases' },
+  { to: '/calendar', label: 'Calendar' },
+  { to: '/wanted', label: 'Wanted' },
   { to: '/downloads', label: 'Downloads' },
   { to: '/qbittorrent', label: 'qBittorrent' },
   { to: '/activity', label: 'Activity' },

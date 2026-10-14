@@ -790,7 +790,7 @@ pre.json {
 }
 .auth-card { width: min(400px, 100%); padding: 22px; }
 
-/* ---------- AniList ---------- */
+/* ---------- metadata (covers, provider search) ---------- */
 .cover {
   display: block;
   flex: none;
@@ -815,10 +815,10 @@ pre.json {
 .table th.cover-col,
 .table td.cover-col { width: 64px; padding-right: 4px; }
 
-.anilist-pick { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-.anilist-search input[type='search'] { width: 100%; }
-.anilist-status { min-height: 1.4em; margin: 4px 0; }
-.anilist-results {
+.media-pick { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.media-search input[type='search'] { width: 100%; }
+.media-status { min-height: 1.4em; margin: 4px 0; }
+.media-results {
   list-style: none;
   margin: 6px 0 0;
   padding: 0;
@@ -827,35 +827,90 @@ pre.json {
   max-height: 440px;
   overflow-y: auto;
 }
-.anilist-row,
+.media-row,
 .related-row,
-.anilist-selected,
-.anilist-linked {
+.media-selected,
+.media-linked {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.anilist-row { padding: 6px 8px; border-bottom: 1px solid var(--border); }
-.anilist-row:last-child { border-bottom: 0; }
-.anilist-row.selected { background: var(--info-bg); }
-.anilist-row > .btn,
+.media-row { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.media-row:last-child { border-bottom: 0; }
+.media-row.selected { background: var(--info-bg); }
+.media-row > .btn,
 .related-row > .btn { flex: none; white-space: nowrap; }
-.anilist-row-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.anilist-row-meta { margin-top: 2px; }
-.anilist-selected {
+.media-row-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.media-row-meta { margin-top: 2px; }
+.media-selected {
   margin-top: 10px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--info-bg);
 }
-.anilist-linked { align-items: flex-start; gap: 14px; }
-.anilist-linked .anilist-row-main > * + * { margin-top: 4px; }
+.media-linked { align-items: flex-start; gap: 14px; }
+.media-linked .media-row-main > * + * { margin-top: 4px; }
 .related-list { list-style: none; margin: 0; padding: 0; }
 .related-row { padding: 6px 0; border-top: 1px solid var(--border); }
 .review-head { display: flex; gap: 16px; align-items: flex-start; }
 @media (max-width: 600px) {
   .review-head,
-  .anilist-linked { flex-direction: column; }
+  .media-linked { flex-direction: column; }
   .cover-lg { width: 96px; height: 136px; }
+}
+
+/* ---------- provider-generic metadata search ---------- */
+.media-search-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.media-search-provider { flex: 0 1 220px; min-width: 0; }
+.media-search-provider select { width: 100%; }
+.media-search-query { flex: 1 1 240px; min-width: 0; }
+
+/* ---------- episodes ---------- */
+.season-meta { margin-bottom: 8px; }
+.season-meta-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.season-meta-line > .actions { margin-left: auto; }
+.progress-line { margin: 8px 0 4px; }
+.progress-bar { height: 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; margin-bottom: 10px; }
+.progress-bar > span { display: block; height: 100%; background: var(--b-green-fg); }
+.episodes-table .title-cell { min-width: 200px; }
+/* A nowrap block does not shrink a table cell by itself: cap it so the ellipsis applies (keeps air date/status in view on phones). */
+.episodes-table .title-cell .truncate { max-width: min(460px, 55vw); }
+.inline-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.inline-edit input { flex: 1 1 180px; min-width: 0; width: auto; }
+.inline-edit .banner { flex-basis: 100%; }
+
+/* ---------- release search drawer ---------- */
+.search-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.inline-form input[type='search'] { flex: 1 1 220px; min-width: 0; width: auto; }
+.search-table .group-row th {
+  background: var(--surface-2);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.95em;
+  color: var(--text);
+}
+.group-row-inner { position: sticky; left: 10px; display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.search-table .title-cell { min-width: 240px; }
+.cond-details { margin: 2px 0; }
+.cond-details > summary { cursor: pointer; color: var(--muted); }
+.cond-details[open] > summary { margin-bottom: 4px; }
+
+/* ---------- calendar / upcoming ---------- */
+.cal-day { padding-bottom: 6px; }
+.cal-day-title { font-size: 1rem; margin: 0 0 6px; }
+.cal-today { border-color: var(--primary); }
+.cal-list { list-style: none; margin: 0; padding: 0; }
+.cal-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+.cal-row:first-child { border-top: 0; }
+.cal-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.cal-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+
+/* ---------- onboarding ---------- */
+.onboarding { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.onboarding li { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.onboarding li.done { opacity: 0.75; }
+.onboarding li.done .step-num { background: var(--b-green-bg); color: var(--b-green-fg); }
+@media (max-width: 800px) {
+  .onboarding { grid-template-columns: minmax(0, 1fr); }
 }

@@ -24,7 +24,13 @@ def test_jobs_and_feed_sync(db: Session, running: None) -> None:
     assert scheduler.is_running()
     sched = scheduler._scheduler
     assert sched is not None
-    assert {j.id for j in sched.get_jobs()} == {"retry", "qbit_status", "retention"}
+    assert {j.id for j in sched.get_jobs()} == {
+        "retry",
+        "qbit_status",
+        "retention",
+        "metadata_refresh",
+        "search_missing",
+    }
     assert scheduler.next_feed_poll_at() is None
 
     feed = FeedSource(name="F", url="https://feed.example.test/rss2", poll_interval_minutes=15)

@@ -29,12 +29,16 @@ UTCDatetime = Annotated[datetime, PlainSerializer(_to_z, return_type=str, when_u
 
 BackfillMode = Literal["skip", "process"]
 FeedStatus = Literal["never", "ok", "error"]
-Outcome = Literal["unprocessed", "accepted", "rejected", "no_match", "historical", "duplicate"]
+Outcome = Literal["unprocessed", "accepted", "rejected", "no_match", "historical", "duplicate", "searched"]
 DownloadStatus = Literal["pending", "submitted", "failed", "exists", "path_mismatch"]
 UrlKind = Literal["magnet", "torrent"]
 Level = Literal["info", "warning", "error"]
 Source = Literal["env", "db"]
 DuplicatePolicy = Literal["one_per_episode", "allow_upgrades"]
+ProviderName = Literal["anilist", "tmdb"]
+MediaKind = Literal["anime", "tv"]
+EpisodeSource = Literal["anilist", "jikan", "tmdb", "manual"]
+EpisodeStatus = Literal["downloaded", "downloading", "pending", "missing", "unaired", "unknown"]
 
 
 class _Out(BaseModel):
@@ -95,6 +99,8 @@ class FeedSourceIn(BaseModel):
     enabled: bool = True
     poll_interval_minutes: int = Field(default=15, ge=5, le=1440)
     backfill_mode: BackfillMode = "skip"
+    # URL with exactly one `{query}` placeholder (release search); SSRF-checked by the router.
+    search_url_template: str | None = Field(default=None, max_length=2048)
 
     @field_validator("name", "url")
     @classmethod
@@ -102,6 +108,16 @@ class FeedSourceIn(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("must not be empty")
+        return v
+
+    @field_validator("search_url_template")
+    @classmethod
+    def _template(cls, v: str | None) -> str | None:
+        if v is None or v.strip() == "":
+            return None
+        v = v.strip()
+        if v.count("{query}") != 1:
+            raise ValueError("must contain {query} exactly once")
         return v
 
 
@@ -118,6 +134,7 @@ class FeedSourceOut(_Out):
     last_error: str | None
     consecutive_failures: int
     initial_poll_done: bool
+    search_url_template: str | None = None
     entry_count: int = 0
     created_at: UTCDatetime
 
@@ -136,6 +153,7 @@ class FeedSourceOut(_Out):
             last_error=feed.last_error,
             consecutive_failures=feed.consecutive_failures,
             initial_poll_done=feed.initial_poll_done,
+            search_url_template=feed.search_url_template,
             entry_count=entry_count,
             created_at=feed.created_at,
         )
@@ -242,15 +260,18 @@ def _http_url(v: str | None) -> str | None:
     return v
 
 
-class AnilistInfo(BaseModel):
-    """Stored on `series.anilist_json`; see `.claude/rules/anilist.md`."""
+class MetadataInfo(BaseModel):
+    """Stored on `series.metadata_json`; see `.claude/rules/metadata.md`."""
 
-    title_romaji: str | None = None
-    title_english: str | None = None
-    title_native: str | None = None
+    provider: ProviderName | None = None
+    id: str | None = None
+    title: str | None = None
+    original_title: str | None = None
+    alt_titles: list[str] = Field(default_factory=list)
+    kind: MediaKind | None = None
     format: str | None = None
     status: str | None = None
-    season_year: int | None = None
+    year: int | None = None
     episodes: int | None = None
     site_url: str | None = None
 
@@ -258,6 +279,17 @@ class AnilistInfo(BaseModel):
     @classmethod
     def _site(cls, v: str | None) -> str | None:
         return _http_url(v)
+
+
+def _metadata_id(v: str | int | None) -> str | None:
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if len(v) > 64 or not re.match(r"^[A-Za-z0-9_.:-]+$", v):
+        raise ValueError("metadata_id must be a short alphanumeric id")
+    return v
 
 
 class SeasonIn(BaseModel):
@@ -268,6 +300,8 @@ class SeasonIn(BaseModel):
     episode_max: int | None = Field(default=None, ge=0)
     absolute_min: int | None = Field(default=None, ge=0)
     absolute_max: int | None = Field(default=None, ge=0)
+    metadata_provider: ProviderName | None = None
+    metadata_id: str | None = None
 
     @field_validator("path_override")
     @classmethod
@@ -279,6 +313,11 @@ class SeasonIn(BaseModel):
         except paths.PathError as exc:
             raise ValueError(str(exc)) from exc
 
+    @field_validator("metadata_id", mode="before")
+    @classmethod
+    def _mid(cls, v: str | int | None) -> str | None:
+        return _metadata_id(v)
+
     @model_validator(mode="after")
     def _ranges(self) -> SeasonIn:
         if self.episode_min is not None and self.episode_max is not None and self.episode_min > self.episode_max:
@@ -287,6 +326,8 @@ class SeasonIn(BaseModel):
             raise ValueError("absolute_min must be <= absolute_max")
         if self.absolute_max is not None and self.absolute_min is None:
             raise ValueError("absolute_max requires absolute_min")
+        if (self.metadata_provider is None) != (self.metadata_id is None):
+            raise ValueError("metadata_provider and metadata_id must be set together")
         return self
 
 
@@ -301,14 +342,22 @@ class SeasonOut(_Out):
     absolute_min: int | None
     absolute_max: int | None
     computed_save_path: str
+    metadata_provider: ProviderName | None = None
+    metadata_id: str | None = None
+    metadata_refreshed_at: UTCDatetime | None = None
+    episode_count: int = 0
+    downloaded_count: int = 0
+    missing_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
     created_at: UTCDatetime
 
     @classmethod
-    def from_model(cls, season: models.Season, media_base: str) -> SeasonOut:
+    def from_model(cls, season: models.Season, media_base: str, summary: SeasonSummaryOut | None = None) -> SeasonOut:
         try:
             computed = paths.build_save_path(media_base, season.series, season)
         except paths.PathError as exc:
             computed = f"invalid path: {exc}"
+        summary = summary or SeasonSummaryOut()
         return cls(
             id=season.id,
             series_id=season.series_id,
@@ -320,6 +369,12 @@ class SeasonOut(_Out):
             absolute_min=season.absolute_min,
             absolute_max=season.absolute_max,
             computed_save_path=computed,
+            metadata_provider=season.metadata_provider,  # type: ignore[arg-type]
+            metadata_id=season.metadata_id,
+            metadata_refreshed_at=season.metadata_refreshed_at,
+            episode_count=summary.episode_count,
+            downloaded_count=summary.downloaded_count,
+            missing_count=summary.missing_count,
             created_at=season.created_at,
         )
 
@@ -332,9 +387,15 @@ class SeriesIn(BaseModel):
     path_override: str | None = None
     category_override: str | None = None
     seasons: list[SeasonIn] | None = None
-    anilist_id: int | None = Field(default=None, ge=1)
+    metadata_provider: ProviderName | None = None
+    metadata_id: str | None = None
     cover_url: str | None = None
-    anilist: AnilistInfo | None = None
+    metadata: MetadataInfo | None = None
+
+    @field_validator("metadata_id", mode="before")
+    @classmethod
+    def _mid(cls, v: str | int | None) -> str | None:
+        return _metadata_id(v)
 
     @field_validator("cover_url")
     @classmethod
@@ -388,6 +449,8 @@ class SeriesIn(BaseModel):
             nums = [s.season_number for s in self.seasons]
             if len(nums) != len(set(nums)):
                 raise ValueError("duplicate season_number in seasons")
+        if (self.metadata_provider is None) != (self.metadata_id is None):
+            raise ValueError("metadata_provider and metadata_id must be set together")
         return self
 
 
@@ -401,13 +464,21 @@ class SeriesOut(_Out):
     category_override: str | None
     seasons: list[SeasonOut]
     rule_count: int
-    anilist_id: int | None = None
+    metadata_provider: ProviderName | None = None
+    metadata_id: str | None = None
     cover_url: str | None = None
-    anilist: AnilistInfo | None = None
+    metadata: MetadataInfo | None = None
     created_at: UTCDatetime
 
     @classmethod
-    def from_model(cls, series: models.Series, media_base: str, rule_count: int | None = None) -> SeriesOut:
+    def from_model(
+        cls,
+        series: models.Series,
+        media_base: str,
+        rule_count: int | None = None,
+        summaries: dict[int, SeasonSummaryOut] | None = None,
+    ) -> SeriesOut:
+        summaries = summaries or {}
         return cls(
             id=series.id,
             name=series.name,
@@ -416,13 +487,30 @@ class SeriesOut(_Out):
             season_folder_format=series.season_folder_format,
             path_override=series.path_override,
             category_override=series.category_override,
-            seasons=[SeasonOut.from_model(s, media_base) for s in series.seasons],
+            seasons=[SeasonOut.from_model(s, media_base, summaries.get(s.id)) for s in series.seasons],
             rule_count=len(series.rules) if rule_count is None else rule_count,
-            anilist_id=series.anilist_id,
+            metadata_provider=series.metadata_provider,  # type: ignore[arg-type]
+            metadata_id=series.metadata_id,
             cover_url=series.cover_url,
-            anilist=AnilistInfo.model_validate(series.anilist) if series.anilist else None,
+            metadata=info_or_none(series.metadata_info),
             created_at=series.created_at,
         )
+
+
+def info_or_none(raw: dict[str, Any] | None) -> MetadataInfo | None:
+    if not raw:
+        return None
+    try:
+        return MetadataInfo.model_validate(raw)
+    except ValueError:
+        return None
+
+
+class SeasonSummaryOut(BaseModel):
+    episode_count: int = 0
+    downloaded_count: int = 0
+    missing_count: int = 0
+    unaired_count: int = 0
 
 
 class SeasonPathOut(BaseModel):
@@ -443,53 +531,80 @@ class PreviewPathOut(BaseModel):
     save_path: str
 
 
-# ---------------------------------------------------------------- AniList
+# ---------------------------------------------------------------- metadata providers
 
 
-class AnilistMediaOut(_Out):
-    id: int
-    title_romaji: str | None
-    title_english: str | None
-    title_native: str | None
-    synonyms: list[str]
+class MetadataProviderOut(BaseModel):
+    name: ProviderName
+    label: str
+    kind: MediaKind
+    configured: bool
+
+
+class MediaResultOut(_Out):
+    provider: ProviderName
+    id: str
+    title: str | None
+    original_title: str | None
+    alt_titles: list[str]
+    kind: MediaKind
     format: str | None
     status: str | None
-    season: str | None
-    season_year: int | None
+    year: int | None
     episodes: int | None
-    cover_medium: str | None
-    cover_large: str | None
+    cover_url: str | None
     site_url: str | None
 
 
-class AnilistRelatedOut(_Out):
+class SeasonInfoOut(_Out):
+    season_number: int
+    name: str | None
+    episode_count: int | None
+    air_date: str | None  # YYYY-MM-DD as reported by the provider
+
+
+class RelatedInfoOut(_Out):
     relation_type: str
-    id: int
-    title_romaji: str | None
-    title_english: str | None
+    provider: ProviderName
+    id: str
+    title: str | None
     format: str | None
     episodes: int | None
-    season_year: int | None
+    year: int | None
     status: str | None
     suggested_season_number: int | None
 
 
-class AnilistMediaDetailOut(AnilistMediaOut):
-    related: list[AnilistRelatedOut]
+class MediaDetailOut(MediaResultOut):
+    seasons: list[SeasonInfoOut]
+    related: list[RelatedInfoOut]
 
 
-class AnilistSuggestionOut(_Out):
-    anilist_id: int
+class SuggestionOut(_Out):
+    provider: ProviderName
+    id: str
     name: str
     aliases: list[str]
     cover_url: str | None
-    anilist: AnilistInfo
+    metadata: MetadataInfo
     seasons: list[SeasonIn]
-    related: list[AnilistRelatedOut]
+    related: list[RelatedInfoOut]
 
 
-class LinkAnilistIn(BaseModel):
-    anilist_id: int | None = Field(default=None, ge=1)
+class LinkMetadataIn(BaseModel):
+    provider: ProviderName | None = None
+    id: str | None = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _mid(cls, v: str | int | None) -> str | None:
+        return _metadata_id(v)
+
+    @model_validator(mode="after")
+    def _both(self) -> LinkMetadataIn:
+        if (self.provider is None) != (self.id is None):
+            raise ValueError("provider and id must both be set (link) or both be null (unlink)")
+        return self
 
 
 # ---------------------------------------------------------------- rules
@@ -820,6 +935,13 @@ class AppSettingsIn(BaseModel):
     allow_private_feed_hosts: bool = False
     feed_fetch_timeout_seconds: int = Field(default=20, ge=1, le=300)
     log_retention_days: int = Field(default=30, ge=1, le=3650)
+    # Episodes / search (fields omitted by older clients keep their stored value).
+    auto_search_missing: bool = False
+    search_interval_hours: int = Field(default=24, ge=1, le=24 * 30)
+    metadata_refresh_hours: int = Field(default=12, ge=1, le=24 * 30)
+    search_delay_seconds: int = Field(default=3, ge=0, le=60)
+    # Write-only: None/omitted = unchanged, "" = clear.
+    tmdb_api_key: str | None = Field(default=None, max_length=1024)
 
     @field_validator("media_base_path")
     @classmethod
@@ -845,6 +967,11 @@ class AppSettingsOut(BaseModel):
     allow_private_feed_hosts: bool
     feed_fetch_timeout_seconds: int
     log_retention_days: int
+    auto_search_missing: bool
+    search_interval_hours: int
+    metadata_refresh_hours: int
+    search_delay_seconds: int
+    tmdb_api_key_set: bool
     sources: dict[str, Source]
     warnings: list[str] = Field(default_factory=list)  # extra (not in contract): env-overridden fields ignored on PUT
 
@@ -871,6 +998,7 @@ class DashboardCounts(BaseModel):
     downloads_submitted_24h: int
     downloads_pending: int
     downloads_failed: int
+    wanted: int = 0
 
 
 class DashboardQbit(BaseModel):
@@ -891,6 +1019,7 @@ class DashboardOut(BaseModel):
     recent_entries: list[FeedEntryOut]
     qbit: DashboardQbit
     scheduler: DashboardScheduler
+    upcoming: list[CalendarItemOut] = Field(default_factory=list)
 
 
 class HealthOut(BaseModel):
@@ -922,3 +1051,97 @@ class PollResultOut(BaseModel):
     no_match: int = 0
     submitted: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- episodes / search / calendar
+
+
+class EpisodeOut(BaseModel):
+    id: int
+    season_id: int
+    episode_number: int
+    title: str | None
+    air_date: UTCDatetime | None
+    source: EpisodeSource
+    status: EpisodeStatus
+    download: DownloadOut | None
+
+
+class EpisodeListOut(BaseModel):
+    items: list[EpisodeOut]
+    summary: SeasonSummaryOut
+
+
+class EpisodeIn(BaseModel):
+    title: str | None = Field(default=None, max_length=500)
+    air_date: datetime | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, v: str | None) -> str | None:
+        return v.strip() or None if v is not None else None
+
+
+class SearchIn(BaseModel):
+    query: str | None = Field(default=None, max_length=200)
+
+    @field_validator("query")
+    @classmethod
+    def _q(cls, v: str | None) -> str | None:
+        return " ".join(v.split()) or None if v is not None else None
+
+
+class CandidateOut(BaseModel):
+    entry: FeedEntryOut
+    episode_number: int
+    rule_id: int
+    rule_name: str
+    conditions: list[ConditionOut]
+    save_path: str | None
+    episode_status: EpisodeStatus
+    already_have: bool
+
+
+class SearchResultOut(BaseModel):
+    queries: list[str]
+    feeds_searched: list[str]
+    fetched: int
+    candidates: list[CandidateOut]
+    errors: list[str]
+
+
+class SkippedOut(BaseModel):
+    episode_number: int
+    reason: str
+
+
+class GrabMissingOut(BaseModel):
+    grabbed: list[DownloadOut]
+    skipped: list[SkippedOut]
+    errors: list[str] = Field(default_factory=list)
+
+
+class CalendarItemOut(BaseModel):
+    series_id: int
+    series_name: str
+    cover_url: str | None
+    season_id: int
+    season_number: int
+    episode_number: int
+    title: str | None
+    air_date: UTCDatetime
+    status: EpisodeStatus
+    monitored: bool
+
+
+class SearchAllSeasonOut(BaseModel):
+    season_id: int
+    series_name: str
+    season_number: int
+    grabbed: int
+    skipped: int
+    errors: list[str]
+
+
+class SearchAllOut(BaseModel):
+    seasons: list[SearchAllSeasonOut]

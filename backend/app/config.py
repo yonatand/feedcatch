@@ -25,12 +25,22 @@ class Settings(BaseSettings):
     QBIT_USERNAME: str | None = None
     QBIT_PASSWORD: str | None = None
     FEED_URL: str | None = None
+    TMDB_API_KEY: str | None = None
+    # Jikan (MyAnimeList mirror) is a best-effort episode-title fallback for AniList; disable on networks that block it.
+    JIKAN_ENABLED: bool = True
     ALLOW_PRIVATE_FEED_HOSTS: bool | None = None
     # Set false to run the API without background jobs (tests, one-off inspection).
     APP_SCHEDULER_ENABLED: bool = True
 
     @field_validator(
-        "APP_SECRET_KEY", "APP_PASSWORD", "QBIT_URL", "QBIT_USERNAME", "QBIT_PASSWORD", "FEED_URL", mode="before"
+        "APP_SECRET_KEY",
+        "APP_PASSWORD",
+        "QBIT_URL",
+        "QBIT_USERNAME",
+        "QBIT_PASSWORD",
+        "FEED_URL",
+        "TMDB_API_KEY",
+        mode="before",
     )
     @classmethod
     def _empty_to_none(cls, v: object) -> object:

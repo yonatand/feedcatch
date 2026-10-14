@@ -80,6 +80,8 @@ class FeedSource(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     initial_poll_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Release search (migration 0003): URL with exactly one `{query}` placeholder.
+    search_url_template: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
     entries: Mapped[list[FeedEntry]] = relationship(
         back_populates="feed", cascade="all, delete-orphan", passive_deletes=True
@@ -125,7 +127,7 @@ class FeedEntry(Base):
 
 class Series(Base):
     __tablename__ = "series"
-    __table_args__ = (Index("ux_series_anilist_id", "anilist_id", unique=True),)
+    __table_args__ = (Index("ux_series_metadata", "metadata_provider", "metadata_id", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
@@ -136,10 +138,12 @@ class Series(Base):
     season_folder_format: Mapped[str] = mapped_column(String(255), nullable=False, default=DEFAULT_SEASON_FOLDER_FORMAT)
     path_override: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     category_override: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # AniList metadata (migration 0002); see .claude/rules/anilist.md
-    anilist_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Metadata provider link (migration 0003); see .claude/rules/metadata.md
+    metadata_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    metadata_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    anilist: Mapped[dict[str, Any] | None] = mapped_column("anilist_json", JSON, nullable=True)
+    # `metadata` is reserved on declarative classes, hence `metadata_info`.
+    metadata_info: Mapped[dict[str, Any] | None] = mapped_column("metadata_json", JSON, nullable=True)
 
     seasons: Mapped[list[Season]] = relationship(
         back_populates="series",
@@ -157,7 +161,10 @@ class Series(Base):
 
 class Season(Base):
     __tablename__ = "seasons"
-    __table_args__ = (UniqueConstraint("series_id", "season_number", name="uq_seasons_series_number"),)
+    __table_args__ = (
+        UniqueConstraint("series_id", "season_number", name="uq_seasons_series_number"),
+        Index("ix_seasons_metadata", "metadata_provider", "metadata_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
@@ -169,6 +176,10 @@ class Season(Base):
     episode_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     absolute_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     absolute_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Episode metadata source (migration 0003); see .claude/rules/episodes.md / metadata.md
+    metadata_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    metadata_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_refreshed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     series: Mapped[Series] = relationship(back_populates="seasons")
     rules: Mapped[list[Rule]] = relationship(
@@ -177,6 +188,33 @@ class Season(Base):
     downloads: Mapped[list[Download]] = relationship(
         back_populates="season", cascade="all, delete-orphan", passive_deletes=True
     )
+    episodes: Mapped[list[Episode]] = relationship(
+        back_populates="season",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Episode.episode_number",
+    )
+
+
+class Episode(Base):
+    """Known episodes of a season (metadata); status is derived, never stored (services/episodes.py)."""
+
+    __tablename__ = "episodes"
+    __table_args__ = (
+        UniqueConstraint("season_id", "episode_number", name="uq_episodes_season_number"),
+        Index("ix_episodes_air_date", "air_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), nullable=False)
+    episode_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    air_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+
+    season: Mapped[Season] = relationship(back_populates="episodes")
 
 
 class Rule(Base):

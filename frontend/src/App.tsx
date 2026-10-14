@@ -14,6 +14,8 @@ const SeriesNew = lazy(() => import('./pages/SeriesNew'));
 const SeriesDetail = lazy(() => import('./pages/SeriesDetail'));
 const Rules = lazy(() => import('./pages/Rules'));
 const Releases = lazy(() => import('./pages/Releases'));
+const Calendar = lazy(() => import('./pages/Calendar'));
+const Wanted = lazy(() => import('./pages/Wanted'));
 const ReleaseInspector = lazy(() => import('./pages/ReleaseInspector'));
 const Downloads = lazy(() => import('./pages/Downloads'));
 const QBittorrent = lazy(() => import('./pages/QBittorrent'));
@@ -88,6 +90,8 @@ export function App() {
               <Route path="rules" element={<Page><Rules /></Page>} />
               <Route path="releases" element={<Page><Releases /></Page>} />
               <Route path="releases/:id" element={<Page><ReleaseInspector /></Page>} />
+              <Route path="calendar" element={<Page><Calendar /></Page>} />
+              <Route path="wanted" element={<Page><Wanted /></Page>} />
               <Route path="downloads" element={<Page><Downloads /></Page>} />
               <Route path="qbittorrent" element={<Page><QBittorrent /></Page>} />
               <Route path="activity" element={<Page><Activity /></Page>} />

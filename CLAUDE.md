@@ -1,6 +1,6 @@
 # feedcatch
 
-Self-hosted anime RSS -> qBittorrent automation. Replaces Sonarr/autobrr/FlexGet for one job:
+Self-hosted RSS -> qBittorrent automation for ongoing series (anime or TV). Replaces Sonarr/autobrr/FlexGet for one job:
 poll AnimeTosho-style RSS, match releases against user rules, send magnet/torrent to an existing
 qBittorrent-nox with an explicit per-torrent `savepath`. The app NEVER touches media files.
 
@@ -16,7 +16,8 @@ Full requirements: `docs/requirements.md` (source of truth for scope).
 - `.claude/rules/api-contract.md`   exact HTTP API. Frontend and backend both follow it.
 - `.claude/rules/safety-invariants.md`  hard constraints (no media access, no secrets in logs, path safety, SSRF).
 - `.claude/rules/backend.md` / `.claude/rules/frontend.md`  conventions per side.
-- `.claude/rules/anilist.md`  AniList metadata search/prefill contract.
+- `.claude/rules/metadata.md`  pluggable metadata providers (AniList, TMDB), seeding/onboarding; `anilist.md` keeps the AniList API facts.
+- `.claude/rules/episodes.md`  episode lists, release search (historic episodes), calendar, wanted.
 - `.claude/rules/verification.md`  what must pass before claiming done.
 - `.claude/skills/run-checks`  commands to lint/typecheck/test/build.
 - `.claude/skills/qbittorrent-api`  Web API facts we rely on (incl. live-observed v5.2.4 differences).

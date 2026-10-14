@@ -8,10 +8,11 @@ export function seriesToIn(s: Series): SeriesIn {
     season_folder_format: s.season_folder_format,
     path_override: s.path_override,
     category_override: s.category_override,
-    // Round-trip the AniList link so a PUT (monitor toggle, edit) never clears it.
-    anilist_id: s.anilist_id,
+    // Round-trip the metadata link so a PUT (monitor toggle, edit) never clears it.
+    metadata_provider: s.metadata_provider,
+    metadata_id: s.metadata_id,
     cover_url: s.cover_url,
-    anilist: s.anilist,
+    metadata: s.metadata,
   };
 }
 
@@ -24,6 +25,8 @@ export function seasonToIn(s: Season): SeasonIn {
     episode_max: s.episode_max,
     absolute_min: s.absolute_min,
     absolute_max: s.absolute_max,
+    metadata_provider: s.metadata_provider ?? null,
+    metadata_id: s.metadata_id ?? null,
   };
 }
 
@@ -36,6 +39,8 @@ export function emptySeason(n = 1): SeasonIn {
     episode_max: null,
     absolute_min: null,
     absolute_max: null,
+    metadata_provider: null,
+    metadata_id: null,
   };
 }
 
@@ -46,4 +51,8 @@ export function rangeText(min: number | null, max: number | null): string {
 
 export function sortSeasons(s: readonly Season[]): Season[] {
   return [...s].sort((a, b) => a.season_number - b.season_number);
+}
+
+export function seasonLabel(n: number): string {
+  return `S${String(n).padStart(2, '0')}`;
 }

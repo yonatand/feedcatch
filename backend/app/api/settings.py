@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import AUTH, Session, Settings, get_db, get_settings
 from app.schemas import AppSettingsIn, AppSettingsOut
-from app.services import activity, settings_store
+from app.services import activity, scheduler, settings_store
 
 router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=AUTH)
 
@@ -23,4 +23,5 @@ def put_app_settings(
     out = settings_store.set_app_settings(db, settings, body)
     activity.log_event(db, "info", "settings_updated", "Application settings updated")
     db.commit()
+    scheduler.sync_episode_jobs(db)
     return out

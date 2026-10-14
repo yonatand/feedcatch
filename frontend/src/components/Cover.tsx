@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { safeUrl } from '../lib/anilist';
+import { safeUrl } from '../lib/metadata';
 
 type Props = {
   url: string | null | undefined;
@@ -10,7 +10,7 @@ type Props = {
 
 const DIMS = { xs: [40, 56], sm: [48, 68], lg: [120, 170] } as const;
 
-/** Cover image from AniList's CDN (lazy, no referrer), or a lettered placeholder box. */
+/** Cover image from the metadata provider's CDN (lazy, no referrer), or a lettered placeholder box. */
 export function Cover({ url, alt, size = 'sm' }: Props) {
   const [failed, setFailed] = useState(false);
   const [w, h] = DIMS[size];

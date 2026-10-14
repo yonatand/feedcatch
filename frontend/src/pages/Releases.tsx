@@ -8,7 +8,7 @@ import { Pagination } from '../components/Pagination';
 import { LoadingBlock, Spinner } from '../components/Spinner';
 import { PageHeader } from '../components/Table';
 
-const OUTCOMES: EntryOutcome[] = ['unprocessed', 'accepted', 'rejected', 'no_match', 'historical', 'duplicate'];
+const OUTCOMES: EntryOutcome[] = ['unprocessed', 'accepted', 'rejected', 'no_match', 'historical', 'duplicate', 'searched'];
 const LIMIT = 50;
 
 function asOutcome(v: string | null): EntryOutcome | undefined {

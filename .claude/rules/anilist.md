@@ -1,4 +1,4 @@
-# AniList integration (decided 2026-10-13)
+# AniList integration (decided 2026-10-13; SUPERSEDED 2026-10-14 by `metadata.md`: AniList is now one provider behind `/api/metadata/*`; the facts below about the AniList API and alias rules still apply)
 
 Purpose: search anime by name and add it as a tracked series with one click, prefilled with canonical name, aliases, cover and
 suggested seasons. AniList is metadata only; it never affects matching except through the aliases the user keeps.

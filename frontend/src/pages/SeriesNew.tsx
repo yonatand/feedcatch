@@ -2,18 +2,30 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { errorMessage } from '../api/client';
 import {
-  fetchAnilistSuggest,
   fetchEntries,
   fetchFeedPreview,
+  fetchMetadataSuggest,
   useCreateSeries,
   useFeeds,
+  useMetadataProviders,
   useSaveRule,
   useSettings,
   useSimulateRule,
   useUpdateSeries,
 } from '../api/hooks';
-import type { AnilistMedia, AnilistRelated, AnilistSuggestion, RuleIn, SeasonIn, Series, SeriesIn, SimulationResult } from '../api/types';
-import { AnilistSearch } from '../components/AnilistSearch';
+import type {
+  MediaResult,
+  MetadataProvider,
+  RelatedInfo,
+  RuleIn,
+  SeasonIn,
+  Series,
+  SeriesIn,
+  SimulationResult,
+  Suggestion,
+  SuggestionSeason,
+} from '../api/types';
+import { MetadataSearch, mediaKey } from '../components/MetadataSearch';
 import { Cover } from '../components/Cover';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { CheckField, FormField } from '../components/FormField';
@@ -25,7 +37,7 @@ import { SimulationTable } from '../components/SimulationTable';
 import { Spinner } from '../components/Spinner';
 import { Badge } from '../components/StatusBadge';
 import { Card, PageHeader } from '../components/Table';
-import { anilistStatus, anilistTitle, metaLine, relationLabel, safeUrl } from '../lib/anilist';
+import { mediaStatus, mediaTitle, metaLine, providerLabel, relationLabel, safeUrl } from '../lib/metadata';
 import { emptySeason, rangeText } from '../lib/series';
 
 type LocalSeason = { key: number; data: SeasonIn };
@@ -40,8 +52,8 @@ function cleanSeason(s: SeasonIn): SeasonIn {
   return { ...s, path_override: po === '' ? null : po };
 }
 
-/** Suggestion seasons may come without monitored/path_override; fill the wizard defaults. */
-function seasonFromSuggestion(s: SeasonIn): SeasonIn {
+/** Suggestion seasons may come without monitored/path_override; fill the wizard defaults, keep provider/id. */
+function seasonFromSuggestion(s: SuggestionSeason): SeasonIn {
   const base = emptySeason(s.season_number ?? 1);
   return {
     ...base,
@@ -51,37 +63,49 @@ function seasonFromSuggestion(s: SeasonIn): SeasonIn {
     episode_max: s.episode_max ?? null,
     absolute_min: s.absolute_min ?? null,
     absolute_max: s.absolute_max ?? null,
+    metadata_provider: s.metadata_provider ?? null,
+    metadata_id: s.metadata_id ?? null,
   };
 }
 
-function AnilistLink({ url }: { url: string | null | undefined }) {
+function SiteLink({ url, label }: { url: string | null | undefined; label: string }) {
   const href = safeUrl(url);
   if (!href) return null;
   return (
     <a href={href} target="_blank" rel="noopener noreferrer">
-      View on AniList
+      View on {label}
     </a>
   );
 }
 
-function RelatedList({ related, added, onAdd }: { related: AnilistRelated[]; added: ReadonlySet<number>; onAdd: (r: AnilistRelated) => void }) {
+function RelatedList({
+  related,
+  added,
+  onAdd,
+  label,
+}: {
+  related: RelatedInfo[];
+  added: ReadonlySet<string>;
+  onAdd: (r: RelatedInfo) => void;
+  label: string;
+}) {
   return (
     <div className="subcard">
       <div className="subcard-head">
-        <strong>Related on AniList</strong>
+        <strong>Related on {label}</strong>
       </div>
       <p className="small muted">
-        Sequels, prequels and other entries AniList links to this one. Release groups often number a sequel as the next season; adding one appends a season
-        with its episode count as the range. Check the numbering against real release titles in step 3.
+        Sequels, prequels and other entries {label} links to this one. Release groups often number a sequel as the next season; adding one appends a season
+        with its episode count as the range, linked to that entry for episode metadata. Check the numbering against real release titles in step 3.
       </p>
       <ul className="related-list">
         {related.map((r) => {
-          const title = anilistTitle(r);
-          const st = anilistStatus(r.status);
-          const isAdded = added.has(r.id);
+          const title = mediaTitle(r);
+          const st = mediaStatus(r.status);
+          const isAdded = added.has(`${r.provider}:${r.id}`);
           return (
             <li key={`${r.relation_type}-${r.id}`} className="related-row">
-              <div className="anilist-row-main">
+              <div className="media-row-main">
                 <Badge tone="purple">{relationLabel(r.relation_type)}</Badge> <strong>{title}</strong>
                 <div className="small muted">
                   {metaLine(r)} <Badge tone={st.tone}>{st.label}</Badge>
@@ -151,12 +175,14 @@ export default function SeriesNew() {
   const [created, setCreated] = useState<Series | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<unknown>(null);
-  // AniList: the applied suggestion, the id being fetched, and whether the user edited seasons by hand.
-  const [suggestion, setSuggestion] = useState<AnilistSuggestion | null>(null);
-  const [suggestPending, setSuggestPending] = useState<number | null>(null);
+  // Metadata: the applied suggestion, the entry being fetched, and whether the user edited seasons by hand.
+  const providersQ = useMetadataProviders();
+  const providers: MetadataProvider[] = providersQ.data?.items ?? [];
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+  const [suggestPending, setSuggestPending] = useState<string | null>(null);
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const [seasonsTouched, setSeasonsTouched] = useState(false);
-  const [addedRelated, setAddedRelated] = useState<ReadonlySet<number>>(new Set<number>());
+  const [addedRelated, setAddedRelated] = useState<ReadonlySet<string>>(new Set<string>());
 
   // Default the season folder format from settings until the user edits it.
   useEffect(() => {
@@ -177,21 +203,23 @@ export default function SeriesNew() {
     setSeasons(fn);
   };
 
-  const pickAnilist = async (m: AnilistMedia) => {
-    setSuggestPending(m.id);
+  const pickMedia = async (m: MediaResult) => {
+    setSuggestPending(mediaKey(m.provider, m.id));
     setSuggestError(null);
     try {
-      const sug = await fetchAnilistSuggest(m.id);
+      const sug = await fetchMetadataSuggest(m.provider, m.id);
       setSuggestion(sug);
-      setAddedRelated(new Set<number>());
+      setAddedRelated(new Set<string>());
       setSeries((s) => ({
         ...s,
         name: sug.name,
         aliases: [...sug.aliases],
-        anilist_id: m.id,
+        metadata_provider: m.provider,
+        metadata_id: m.id,
         cover_url: sug.cover_url,
-        anilist: sug.anilist,
+        metadata: sug.metadata,
       }));
+      // TMDB suggestions arrive with every season (all kept, editable); AniList with one (sequels via "Add as season").
       if (!seasonsTouched && sug.seasons.length > 0) {
         setSeasons(sug.seasons.map((x) => ({ key: nextKey(), data: seasonFromSuggestion(x) })));
       }
@@ -202,23 +230,29 @@ export default function SeriesNew() {
     }
   };
 
-  const clearAnilist = () => {
+  const clearMetadata = () => {
     setSuggestion(null);
     setSuggestError(null);
-    setAddedRelated(new Set<number>());
-    setSeries((s) => ({ ...s, anilist_id: null, cover_url: null, anilist: null }));
+    setAddedRelated(new Set<string>());
+    setSeries((s) => ({ ...s, metadata_provider: null, metadata_id: null, cover_url: null, metadata: null }));
     if (!seasonsTouched) setSeasons([{ key: nextKey(), data: emptySeason(1) }]);
   };
 
-  const addRelatedSeason = (r: AnilistRelated) => {
+  const addRelatedSeason = (r: RelatedInfo) => {
     editSeasons((p) => {
-      const n = Math.max(0, ...p.map((x) => x.data.season_number)) + 1;
-      return [...p, { key: nextKey(), data: { ...emptySeason(n), episode_max: r.episodes } }];
+      const used = new Set(p.map((x) => x.data.season_number));
+      const sug = r.suggested_season_number;
+      const n = sug !== null && !used.has(sug) ? sug : Math.max(0, ...p.map((x) => x.data.season_number)) + 1;
+      return [
+        ...p,
+        { key: nextKey(), data: { ...emptySeason(n), episode_max: r.episodes, metadata_provider: r.provider, metadata_id: r.id } },
+      ];
     });
-    setAddedRelated((prev) => new Set(prev).add(r.id));
+    setAddedRelated((prev) => new Set(prev).add(`${r.provider}:${r.id}`));
   };
 
-  const linked = series.anilist ?? null;
+  const linked = series.metadata ?? null;
+  const linkedLabel = providerLabel(series.metadata_provider ?? linked?.provider, providers);
 
   const seasonNumbers = seasons.map((s) => s.data.season_number);
   const dupSeason = seasonNumbers.some((n, i) => seasonNumbers.indexOf(n) !== i);
@@ -233,9 +267,10 @@ export default function SeriesNew() {
     path_override: series.path_override?.trim() ? series.path_override.trim() : null,
     category_override: series.category_override?.trim() ? series.category_override.trim() : null,
     seasons: seasons.map((s) => cleanSeason(s.data)),
-    anilist_id: series.anilist_id ?? null,
+    metadata_provider: series.metadata_provider ?? null,
+    metadata_id: series.metadata_id ?? null,
     cover_url: series.cover_url ?? null,
-    anilist: series.anilist ?? null,
+    metadata: series.metadata ?? null,
   });
 
   /** Rule as sent to /api/rules/simulate with an inline series: series_id 0, season_id = index into series.seasons. */
@@ -332,22 +367,27 @@ export default function SeriesNew() {
               if (step1Valid) setStep(1);
             }}
           >
-            <div className="anilist-pick">
-              <AnilistSearch onPick={(m) => void pickAnilist(m)} pendingId={suggestPending} selectedId={series.anilist_id ?? null} autoFocus />
-              <ErrorBanner error={suggestError} title="Could not load AniList details" onDismiss={() => setSuggestError(null)} />
+            <div className="media-pick">
+              <MetadataSearch
+                onPick={(m) => void pickMedia(m)}
+                pendingKey={suggestPending}
+                selectedKey={mediaKey(series.metadata_provider, series.metadata_id)}
+                autoFocus
+              />
+              <ErrorBanner error={suggestError} title="Could not load details" onDismiss={() => setSuggestError(null)} />
               {linked ? (
-                <div className="anilist-selected">
-                  <Cover url={series.cover_url} alt={series.name.trim() || anilistTitle(linked)} size="sm" />
-                  <div className="anilist-row-main">
+                <div className="media-selected">
+                  <Cover url={series.cover_url} alt={series.name.trim() || mediaTitle(linked)} size="sm" />
+                  <div className="media-row-main">
                     <div>
-                      Using AniList: <strong>{anilistTitle(linked)}</strong>
+                      Using {linkedLabel}: <strong>{mediaTitle(linked)}</strong>
                     </div>
                     <div className="small muted">{metaLine(linked)}</div>
                     <div className="small">
-                      <AnilistLink url={linked.site_url} />
+                      <SiteLink url={linked.site_url} label={linkedLabel} />
                       {safeUrl(linked.site_url) ? ' · ' : null}
-                      <button type="button" className="link-btn" onClick={clearAnilist}>
-                        Clear AniList selection
+                      <button type="button" className="link-btn" onClick={clearMetadata}>
+                        Clear {linkedLabel} selection
                       </button>
                     </div>
                   </div>
@@ -419,7 +459,10 @@ export default function SeriesNew() {
       {step === 1 ? (
         <Card title="2. Seasons">
           {suggestion && linked && !seasonsTouched ? (
-            <Notice kind="info">Seasons prefilled from AniList. Adjust the ranges to how release groups number this show.</Notice>
+            <Notice kind="info">
+              {suggestion.seasons.length > 1 ? `${suggestion.seasons.length} seasons` : 'Seasons'} prefilled from {linkedLabel}. Remove the ones you do not
+              want and adjust the ranges to how release groups number this show.
+            </Notice>
           ) : null}
           <p className="small muted">
             Define each season you want. Releases are only accepted when the season is explicit in the title (e.g. S02E05, “Season 2 - 05”) or an absolute
@@ -428,7 +471,15 @@ export default function SeriesNew() {
           {seasons.map((ls, i) => (
             <div key={ls.key} className="subcard">
               <div className="subcard-head">
-                <strong>Season {ls.data.season_number}</strong>
+                <strong>
+                  Season {ls.data.season_number}
+                  {ls.data.metadata_provider && ls.data.metadata_id ? (
+                    <span className="small muted">
+                      {' '}
+                      · {providerLabel(ls.data.metadata_provider, providers)} #{ls.data.metadata_id}
+                    </span>
+                  ) : null}
+                </strong>
                 {seasons.length > 1 ? (
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => editSeasons((p) => p.filter((x) => x.key !== ls.key))}>
                     Remove
@@ -453,7 +504,7 @@ export default function SeriesNew() {
             Add season
           </button>
           {suggestion && linked && suggestion.related.length > 0 ? (
-            <RelatedList related={suggestion.related} added={addedRelated} onAdd={addRelatedSeason} />
+            <RelatedList related={suggestion.related} added={addedRelated} onAdd={addRelatedSeason} label={linkedLabel} />
           ) : null}
           <div className="form-actions">
             <button type="button" className="btn btn-ghost" onClick={() => setStep(0)}>
@@ -558,11 +609,11 @@ export default function SeriesNew() {
               </div>
               {linked ? (
                 <div className="kv-row">
-                  <dt>AniList</dt>
+                  <dt>{linkedLabel}</dt>
                   <dd>
-                    {anilistTitle(linked)} <span className="muted">({metaLine(linked)})</span>
+                    {mediaTitle(linked)} <span className="muted">({metaLine(linked)})</span>
                     {safeUrl(linked.site_url) ? ' · ' : null}
-                    <AnilistLink url={linked.site_url} />
+                    <SiteLink url={linked.site_url} label={linkedLabel} />
                   </dd>
                 </div>
               ) : null}
@@ -579,6 +630,16 @@ export default function SeriesNew() {
           <p className="small muted">
             These strings are sent to qBittorrent as <code>savepath</code>. This app never creates, reads or modifies those folders.
           </p>
+          {seasons.some((s) => s.data.metadata_provider && s.data.metadata_id) ? (
+            <p className="small muted">
+              Episode metadata (titles and air dates) will be fetched after creation for the seasons linked to a metadata entry; see the Episodes section on the
+              series page. Already-aired episodes can then be found with “Search releases”.
+            </p>
+          ) : (
+            <p className="small muted">
+              No season is linked to a metadata entry, so no episode list will be fetched. You can link seasons later on the series page.
+            </p>
+          )}
           <div className="monitor-toggle">
             <CheckField
               label={<strong>Monitor this series (enable automatic grabs)</strong>}

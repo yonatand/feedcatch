@@ -26,6 +26,8 @@ export type FeedSource = {
   enabled: boolean;
   poll_interval_minutes: number;
   backfill_mode: 'skip' | 'process';
+  /** Search feed URL with `{query}` exactly once (episodes.md); null = feed not used for release search. */
+  search_url_template: string | null;
   last_checked_at: string | null;
   last_success_at: string | null;
   last_status: 'never' | 'ok' | 'error';
@@ -50,7 +52,7 @@ export type FeedEntryPreview = {
   parsed: ParsedRelease;
 };
 
-export type EntryOutcome = 'unprocessed' | 'accepted' | 'rejected' | 'no_match' | 'historical' | 'duplicate';
+export type EntryOutcome = 'unprocessed' | 'accepted' | 'rejected' | 'no_match' | 'historical' | 'duplicate' | 'searched';
 
 export type FeedEntry = FeedEntryPreview & {
   id: number;
@@ -88,11 +90,32 @@ export type Season = {
   episode_max: number | null;
   absolute_min: number | null;
   absolute_max: number | null;
+  /** tmdb: the TV id (season number is the season's own); anilist: the AniList media id of this entry. */
+  metadata_provider: MetadataProviderName | null;
+  metadata_id: string | null;
+  metadata_refreshed_at?: string | null;
   computed_save_path: string;
   created_at: string;
+  // computed (episodes.md)
+  episode_count: number;
+  downloaded_count: number;
+  missing_count: number;
+  /** best-effort metadata refresh problems after a PUT */
+  warnings?: string[];
 };
 
-export type SeasonIn = Omit<Season, 'id' | 'series_id' | 'computed_save_path' | 'created_at'>;
+export type SeasonIn = Omit<
+  Season,
+  | 'id'
+  | 'series_id'
+  | 'computed_save_path'
+  | 'created_at'
+  | 'metadata_refreshed_at'
+  | 'episode_count'
+  | 'downloaded_count'
+  | 'missing_count'
+  | 'warnings'
+>;
 
 export type Series = {
   id: number;
@@ -104,9 +127,10 @@ export type Series = {
   category_override: string | null;
   seasons: Season[];
   rule_count: number;
-  anilist_id: number | null;
+  metadata_provider: MetadataProviderName | null;
+  metadata_id: string | null;
   cover_url: string | null;
-  anilist: AnilistInfo | null;
+  metadata: MetadataInfo | null;
   created_at: string;
 };
 
@@ -118,9 +142,10 @@ export type SeriesIn = {
   path_override?: string | null;
   category_override?: string | null;
   seasons?: SeasonIn[]; // seasons only honored on POST
-  anilist_id?: number | null;
+  metadata_provider?: MetadataProviderName | null;
+  metadata_id?: string | null;
   cover_url?: string | null;
-  anilist?: AnilistInfo | null;
+  metadata?: MetadataInfo | null;
 };
 
 export type Rule = {
@@ -260,10 +285,17 @@ export type AppSettings = {
   allow_private_feed_hosts: boolean;
   feed_fetch_timeout_seconds: number;
   log_retention_days: number;
+  auto_search_missing: boolean;
+  search_interval_hours: number;
+  metadata_refresh_hours: number;
+  search_delay_seconds: number;
+  tmdb_api_key_set: boolean;
   sources: Record<string, ConfigSource>;
+  warnings?: string[];
 };
 
-export type AppSettingsIn = Omit<AppSettings, 'sources'>;
+/** PUT /api/settings. `tmdb_api_key` omitted = unchanged; "" = clear. */
+export type AppSettingsIn = Omit<AppSettings, 'sources' | 'warnings' | 'tmdb_api_key_set'> & { tmdb_api_key?: string };
 
 export type AuthStatus = { auth_mode: 'password' | 'disabled'; setup_required: boolean; authenticated: boolean };
 
@@ -277,7 +309,9 @@ export type Dashboard = {
     downloads_submitted_24h: number;
     downloads_pending: number;
     downloads_failed: number;
+    wanted: number;
   };
+  upcoming: CalendarItem[]; // next 7 days, max 10, monitored only
   recent_downloads: Download[]; // last 10 any status
   failed_downloads: Download[]; // last 10 failed/path_mismatch
   recent_entries: FeedEntry[]; // last 10
@@ -296,6 +330,7 @@ export type FeedIn = {
   enabled: boolean;
   poll_interval_minutes: number;
   backfill_mode: 'skip' | 'process';
+  search_url_template: string | null;
 };
 
 export type FeedTestResult = {
@@ -340,60 +375,140 @@ export type RegexValidation = { valid: boolean; error: string | null };
 
 export type Health = { status: 'ok'; db: 'ok'; scheduler: 'running' | 'stopped'; version: string };
 
-// ---- AniList (.claude/rules/anilist.md) ----
+// ---- Metadata providers (.claude/rules/metadata.md) ----
 
-export type AnilistFormat = 'TV' | 'TV_SHORT' | 'MOVIE' | 'SPECIAL' | 'OVA' | 'ONA' | 'MUSIC';
-export type AnilistStatus = 'FINISHED' | 'RELEASING' | 'NOT_YET_RELEASED' | 'CANCELLED' | 'HIATUS';
+export type MetadataProviderName = 'anilist' | 'tmdb';
+export type MediaKind = 'anime' | 'tv';
 
-/** Stored on the series as `anilist` (backend column `anilist_json`). */
-export type AnilistInfo = {
-  title_romaji: string | null;
-  title_english: string | null;
-  title_native: string | null;
+export type MetadataProvider = { name: MetadataProviderName; label: string; kind: MediaKind; configured: boolean };
+
+/** Stored on the series as `metadata` (backend column `metadata_json`). */
+export type MetadataInfo = {
+  provider: MetadataProviderName | null;
+  id: string | null;
+  title: string | null;
+  original_title: string | null;
+  alt_titles: string[];
+  kind: MediaKind | null;
   format: string | null;
   status: string | null;
-  season_year: number | null;
+  year: number | null;
   episodes: number | null;
   site_url: string | null;
 };
 
-export type AnilistMedia = {
-  id: number;
-  title_romaji: string | null;
-  title_english: string | null;
-  title_native: string | null;
-  synonyms: string[];
+export type MediaResult = {
+  provider: MetadataProviderName;
+  id: string;
+  title: string | null;
+  original_title: string | null;
+  alt_titles: string[];
+  kind: MediaKind;
   format: string | null;
   status: string | null;
-  season: string | null;
-  season_year: number | null;
+  year: number | null;
   episodes: number | null;
-  cover_medium: string | null;
-  cover_large: string | null;
+  cover_url: string | null;
   site_url: string | null;
 };
 
-export type AnilistRelated = {
+export type SeasonInfo = { season_number: number; name: string | null; episode_count: number | null; air_date: string | null };
+
+export type RelatedInfo = {
   relation_type: string;
-  id: number;
-  title_romaji: string | null;
-  title_english: string | null;
+  provider: MetadataProviderName;
+  id: string;
+  title: string | null;
   format: string | null;
   episodes: number | null;
-  season_year: number | null;
+  year: number | null;
   status: string | null;
   suggested_season_number: number | null;
 };
 
-export type AnilistMediaDetail = AnilistMedia & { related: AnilistRelated[] };
+export type MediaDetail = MediaResult & { seasons: SeasonInfo[]; related: RelatedInfo[] };
 
-export type AnilistSuggestion = {
+/** Suggestion seasons are SeasonIn-like; monitored/path_override may be missing. */
+export type SuggestionSeason = Partial<SeasonIn> & { season_number: number };
+
+export type Suggestion = {
+  provider: MetadataProviderName;
+  id: string;
   name: string;
   aliases: string[];
   cover_url: string | null;
-  anilist: AnilistInfo;
-  seasons: SeasonIn[];
-  related: AnilistRelated[];
+  metadata: MetadataInfo;
+  seasons: SuggestionSeason[];
+  related: RelatedInfo[];
 };
 
-export type LinkAnilistIn = { anilist_id: number | null };
+export type LinkMetadataIn = { provider: MetadataProviderName | null; id: string | null };
+
+// ---- Episodes, release search, calendar, wanted (.claude/rules/episodes.md) ----
+
+export type EpisodeStatus = 'downloaded' | 'downloading' | 'pending' | 'missing' | 'unaired' | 'unknown';
+
+export type Episode = {
+  id: number;
+  season_id: number;
+  episode_number: number;
+  title: string | null;
+  air_date: string | null;
+  source: 'anilist' | 'tmdb' | 'jikan' | 'manual';
+  status: EpisodeStatus;
+  download: Download | null;
+};
+
+export type EpisodeSummary = { episode_count: number; downloaded_count: number; missing_count: number; unaired_count: number };
+
+export type EpisodesResponse = { items: Episode[]; summary: EpisodeSummary };
+
+export type EpisodeIn = { title?: string | null; air_date?: string | null };
+
+export type Candidate = {
+  entry: FeedEntry;
+  episode_number: number;
+  rule_id: number;
+  rule_name: string;
+  conditions: Condition[];
+  save_path: string | null;
+  episode_status: EpisodeStatus;
+  already_have: boolean;
+};
+
+export type SearchResult = {
+  queries: string[];
+  /** names of the feeds that were searched */
+  feeds_searched: string[];
+  fetched: number;
+  candidates: Candidate[];
+  errors: string[];
+};
+
+export type SearchIn = { query?: string };
+
+export type GrabMissingResult = { grabbed: Download[]; skipped: { episode_number: number; reason: string }[]; errors?: string[] };
+
+export type CalendarItem = {
+  series_id: number;
+  series_name: string;
+  cover_url: string | null;
+  season_id: number;
+  season_number: number;
+  episode_number: number;
+  title: string | null;
+  air_date: string;
+  status: EpisodeStatus;
+  monitored: boolean;
+};
+
+export type SearchAllSeason = {
+  season_id: number;
+  series_name: string;
+  season_number: number;
+  grabbed: number;
+  skipped: number;
+  errors: string[];
+};
+
+export type SearchAllResult = { seasons: SearchAllSeason[] };

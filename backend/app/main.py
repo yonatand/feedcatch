@@ -17,7 +17,22 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from app import __version__
-from app.api import activity, anilist, auth, dashboard, downloads, entries, feeds, health, qbit, rules, series, settings
+from app.api import (
+    activity,
+    auth,
+    calendar,
+    dashboard,
+    downloads,
+    entries,
+    episodes,
+    feeds,
+    health,
+    metadata,
+    qbit,
+    rules,
+    series,
+    settings,
+)
 from app.config import get_settings
 from app.db import SessionLocal, configure_engine, run_migrations
 from app.logging_setup import configure_logging
@@ -25,7 +40,7 @@ from app.services import scheduler, settings_store
 from app.services.auth import LoginRateLimiter
 from app.services.paths import PathError
 from app.services.qbit import QbitError
-from app.services.seed import seed_demo
+from app.services.seed import seed_defaults
 from app.services.ssrf import SsrfError
 
 log = structlog.get_logger("app")
@@ -47,6 +62,8 @@ _400_FIELDS = {
     "name",
     "cover_url",
     "site_url",
+    "search_url_template",
+    "metadata_id",
 }
 
 
@@ -69,7 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with SessionLocal() as db:
         settings_store.ensure_defaults(db)
         db.commit()
-        seed_demo(db, s)
+        seed_defaults(db, s)
     if s.APP_SCHEDULER_ENABLED:
         scheduler.start(s)
     log.info("startup", version=__version__, auth_disabled=s.APP_AUTH_DISABLED, scheduler=s.APP_SCHEDULER_ENABLED)
@@ -181,7 +198,9 @@ def create_app() -> FastAPI:
         settings,
         activity,
         health,
-        anilist,
+        metadata,
+        episodes,
+        calendar,
     ):
         app.include_router(module.router)
     _register_spa(app)

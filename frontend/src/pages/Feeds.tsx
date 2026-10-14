@@ -15,12 +15,36 @@ import { Card, EmptyRow, PageHeader, TableWrap } from '../components/Table';
 import { TimeAgo } from '../components/TimeAgo';
 
 const DEFAULT_FEED: FeedIn = {
-  name: 'AnimeTosho',
-  url: 'https://feed.animetosho.net/rss2',
+  name: '',
+  url: '',
   enabled: true,
   poll_interval_minutes: 15,
   backfill_mode: 'skip',
+  search_url_template: null,
 };
+
+/** Client-side presets: they only fill name, url and search template (the server knows nothing about them). */
+const PRESETS: { id: string; label: string; name: string; url: string; template: string | null }[] = [
+  {
+    id: 'animetosho',
+    label: 'AnimeTosho (anime)',
+    name: 'AnimeTosho',
+    url: 'https://feed.animetosho.net/rss2',
+    template: 'https://feed.animetosho.net/rss2?q={query}',
+  },
+  { id: 'nyaa', label: 'Nyaa (anime)', name: 'Nyaa', url: 'https://nyaa.si/?page=rss', template: 'https://nyaa.si/?page=rss&q={query}' },
+  { id: 'custom', label: 'Custom RSS/Atom', name: '', url: '', template: null },
+];
+
+/** null = fine; else a hint. The server validates too (exactly one {query}, SSRF rules). */
+function templateProblem(t: string | null): string | null {
+  if (t === null || t.trim() === '') return null;
+  const n = t.split('{query}').length - 1;
+  if (n === 0) return 'Must contain {query} where the search terms go.';
+  if (n > 1) return 'Must contain {query} exactly once.';
+  if (!/^https?:\/\//i.test(t.trim())) return 'Must be an http(s) URL.';
+  return null;
+}
 
 function toIn(f: FeedSource): FeedIn {
   return {
@@ -29,6 +53,7 @@ function toIn(f: FeedSource): FeedIn {
     enabled: f.enabled,
     poll_interval_minutes: f.poll_interval_minutes,
     backfill_mode: f.backfill_mode,
+    search_url_template: f.search_url_template ?? null,
   };
 }
 
@@ -90,23 +115,77 @@ function FeedForm({ initial, onDone }: { initial: FeedSource | null; onDone: () 
   const save = useSaveFeed();
   const test = useTestFeedUrl();
   const set = <K extends keyof FeedIn>(k: K, val: FeedIn[K]) => setV({ ...v, [k]: val });
+  const [preset, setPreset] = useState('');
   const intervalBad = v.poll_interval_minutes < 5 || v.poll_interval_minutes > 1440;
+  const tplProblem = templateProblem(v.search_url_template);
 
   return (
     <Card title={initial ? `Edit feed: ${initial.name}` : 'Add feed'}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          save.mutate({ id: initial?.id, body: { ...v, name: v.name.trim(), url: v.url.trim() } }, { onSuccess: onDone });
+          const tpl = v.search_url_template?.trim() ?? '';
+          save.mutate(
+            { id: initial?.id, body: { ...v, name: v.name.trim(), url: v.url.trim(), search_url_template: tpl === '' ? null : tpl } },
+            { onSuccess: onDone },
+          );
         }}
       >
         <div className="form-grid">
+          <FormField
+            label="Preset"
+            help="Optional. Fills name, feed URL and search URL template; everything stays editable."
+            className="span-2"
+          >
+            {(id) => (
+              <select
+                id={id}
+                value={preset}
+                onChange={(e) => {
+                  setPreset(e.target.value);
+                  const p = PRESETS.find((x) => x.id === e.target.value);
+                  if (p) setV({ ...v, name: p.name, url: p.url, search_url_template: p.template });
+                }}
+              >
+                <option value="">Choose a preset…</option>
+                {PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
           <FormField label="Name">
             {(id) => <input id={id} type="text" required value={v.name} onChange={(e) => set('name', e.target.value)} />}
           </FormField>
           <FormField label="RSS2 / Atom URL" help="http(s) only. Private/LAN hosts are rejected unless allowed in Settings." className="span-2">
             {(id) => (
-              <input id={id} type="url" required value={v.url} onChange={(e) => set('url', e.target.value)} placeholder="https://feed.animetosho.net/rss2" />
+              <input id={id} type="url" required value={v.url} onChange={(e) => set('url', e.target.value)} placeholder="https://example.org/rss" />
+            )}
+          </FormField>
+          <FormField
+            label="Search URL template"
+            error={tplProblem}
+            help={
+              <>
+                Optional. Used by “Search releases” to find already-aired episodes the regular feed no longer carries. Put <code>{'{query}'}</code> exactly
+                once where the URL-encoded search terms go, e.g. <code>https://feed.animetosho.net/rss2?q={'{query}'}</code>. Same host rules as the feed
+                URL. Leave empty to exclude this feed from searches.
+              </>
+            }
+            className="span-2"
+          >
+            {(id) => (
+              <input
+                id={id}
+                type="text"
+                inputMode="url"
+                className="mono"
+                value={v.search_url_template ?? ''}
+                onChange={(e) => set('search_url_template', e.target.value === '' ? null : e.target.value)}
+                placeholder="https://example.org/rss?q={query}"
+              />
             )}
           </FormField>
           <FormField label="Poll interval (minutes)" error={intervalBad ? 'Must be between 5 and 1440.' : null} help="5–1440, default 15.">
@@ -134,7 +213,7 @@ function FeedForm({ initial, onDone }: { initial: FeedSource | null; onDone: () 
         ) : null}
         <ErrorBanner error={save.error} title="Could not save feed" />
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={save.isPending || intervalBad}>
+          <button type="submit" className="btn btn-primary" disabled={save.isPending || intervalBad || tplProblem !== null}>
             {save.isPending ? 'Saving…' : initial ? 'Save' : 'Add feed'}
           </button>
           <button type="button" className="btn" disabled={test.isPending || !v.url.trim()} onClick={() => test.mutate(v.url.trim())}>
@@ -224,7 +303,7 @@ export default function Feeds() {
             </thead>
             <tbody>
               {items.length === 0 ? (
-                <EmptyRow colSpan={6}>No feeds configured. Add the AnimeTosho RSS feed to get started.</EmptyRow>
+                <EmptyRow colSpan={6}>No feeds configured. Use “Add feed” and pick a preset (AnimeTosho, Nyaa) or any RSS/Atom URL.</EmptyRow>
               ) : null}
               {items.map((f) => {
                 const r = results[f.id];
@@ -238,6 +317,12 @@ export default function Feeds() {
                         <div className="small muted">
                           backfill: {f.backfill_mode === 'skip' ? 'skip existing' : 'process existing'}
                           {f.initial_poll_done ? '' : ' · first poll pending'}
+                          {' · '}
+                          {f.search_url_template ? (
+                            <span title={f.search_url_template}>release search on</span>
+                          ) : (
+                            <span title="No search URL template: not used by release search">no release search</span>
+                          )}
                         </div>
                       </td>
                       <td>

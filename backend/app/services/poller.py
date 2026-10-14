@@ -319,6 +319,8 @@ def _poll(db: Session, feed_id: int, settings: Settings) -> PollResultOut:
     rules = active_rules(db)
     created: list[Download] = []
     for entry in new_entries:
+        if entry.outcome == "searched":  # defensive: search results are never auto-dispatched
+            continue
         evals = _evaluate_rules(db, entry, rules, store=True)
         if historical:
             result.historical += 1

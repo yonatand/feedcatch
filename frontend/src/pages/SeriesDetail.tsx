@@ -5,7 +5,8 @@ import {
   useDeleteRule,
   useDeleteSeason,
   useDeleteSeries,
-  useLinkAnilist,
+  useLinkMetadata,
+  useMetadataProviders,
   useRules,
   useSaveRule,
   useSeries,
@@ -14,20 +15,21 @@ import {
   useUpdateSeason,
   useUpdateSeries,
 } from '../api/hooks';
-import type { AnilistMedia, Rule, SeasonIn, Series, SeriesIn } from '../api/types';
-import { AnilistSearch } from '../components/AnilistSearch';
+import type { MediaResult, MetadataProvider, Rule, SeasonIn, Series, SeriesIn } from '../api/types';
 import { ConfirmInline } from '../components/ConfirmInline';
 import { Cover } from '../components/Cover';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { CheckField, FormField } from '../components/FormField';
 import { ListInput } from '../components/ListInput';
+import { MetadataSearch, mediaKey } from '../components/MetadataSearch';
 import { RuleForm, ruleToIn } from '../components/RuleForm';
+import { SeasonEpisodesCard } from '../components/SeasonEpisodes';
 import { SeasonFields } from '../components/SeasonFields';
 import { SimulationTable } from '../components/SimulationTable';
 import { LoadingBlock, Spinner } from '../components/Spinner';
 import { Badge, StatusBadge } from '../components/StatusBadge';
 import { Card, EmptyRow, PageHeader, TableWrap } from '../components/Table';
-import { anilistStatus, anilistSubtitle, anilistTitle, metaLine, safeUrl } from '../lib/anilist';
+import { mediaStatus, mediaSubtitle, mediaTitle, metaLine, providerLabel, safeUrl } from '../lib/metadata';
 import { emptySeason, rangeText, seasonToIn, seriesToIn, sortSeasons } from '../lib/series';
 
 function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) {
@@ -46,9 +48,10 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
               name: v.name.trim(),
               path_override: v.path_override?.trim() ? v.path_override.trim() : null,
               category_override: v.category_override?.trim() ? v.category_override.trim() : null,
-              anilist_id: series.anilist_id,
+              metadata_provider: series.metadata_provider,
+              metadata_id: series.metadata_id,
               cover_url: series.cover_url,
-              anilist: series.anilist,
+              metadata: series.metadata,
             },
           },
           { onSuccess: onDone },
@@ -103,20 +106,25 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
   );
 }
 
-function AnilistCard({ series }: { series: Series }) {
-  const link = useLinkAnilist(series.id);
+function MetadataCard({ series, providers }: { series: Series; providers: MetadataProvider[] }) {
+  const link = useLinkMetadata(series.id);
   const [searching, setSearching] = useState(false);
-  const info = series.anilist;
-  const linked = series.anilist_id !== null;
+  const info = series.metadata;
+  const linked = series.metadata_provider !== null && series.metadata_id !== null;
   const href = safeUrl(info?.site_url);
-  const pick = (m: AnilistMedia) => {
-    link.mutate(m.id, {
-      onSuccess: () => setSearching(false),
-    });
+  const label = providerLabel(series.metadata_provider, providers);
+  const pick = (m: MediaResult) => {
+    link.mutate(
+      { provider: m.provider, id: m.id },
+      {
+        onSuccess: () => setSearching(false),
+      },
+    );
   };
+  const pendingKey = link.isPending && link.variables ? mediaKey(link.variables.provider, link.variables.id) : null;
   return (
     <Card
-      title="AniList"
+      title={linked ? `Metadata (${label})` : 'Metadata'}
       actions={
         <>
           {searching ? (
@@ -125,61 +133,67 @@ function AnilistCard({ series }: { series: Series }) {
             </button>
           ) : (
             <button type="button" className="btn btn-sm" disabled={link.isPending} onClick={() => { link.reset(); setSearching(true); }}>
-              {linked ? 'Change link' : 'Link to AniList'}
+              {linked ? 'Change link' : 'Link to metadata'}
             </button>
           )}
           {linked && !searching ? (
             <ConfirmInline
               label="Unlink"
               confirmLabel="Unlink"
-              message="Clears the cover and AniList info. Aliases are kept."
-              pending={link.isPending && link.variables === null}
-              onConfirm={() => link.mutate(null)}
+              message={`Clears the cover and ${label} info. Aliases and season links are kept.`}
+              pending={link.isPending && link.variables?.provider === null}
+              onConfirm={() => link.mutate({ provider: null, id: null })}
             />
           ) : null}
         </>
       }
     >
-      <ErrorBanner error={link.error} title={linked ? 'AniList update failed' : 'Could not link'} onDismiss={() => link.reset()} />
+      <ErrorBanner error={link.error} title={linked ? `${label} update failed` : 'Could not link'} onDismiss={() => link.reset()} />
       {linked ? (
-        <div className="anilist-linked">
+        <div className="media-linked">
           <Cover url={series.cover_url} alt={series.name} size="lg" />
-          <div className="anilist-row-main">
+          <div className="media-row-main">
             {info ? (
               <>
                 <div>
-                  <strong>{anilistTitle(info)}</strong>
+                  <strong>{mediaTitle(info)}</strong> {info.kind ? <Badge tone="grey">{info.kind === 'tv' ? 'TV' : info.kind}</Badge> : null}
                 </div>
-                {anilistSubtitle(info) ? <div className="small muted">{anilistSubtitle(info)}</div> : null}
-                {info.title_native ? <div className="small muted">{info.title_native}</div> : null}
+                {mediaSubtitle(info) ? <div className="small muted">{mediaSubtitle(info)}</div> : null}
+                {info.alt_titles.length > 0 ? <div className="small muted">also: {info.alt_titles.slice(0, 5).join(', ')}</div> : null}
                 <div className="small">
-                  <span className="muted">{metaLine(info)}</span> <Badge tone={anilistStatus(info.status).tone}>{anilistStatus(info.status).label}</Badge>
+                  <span className="muted">{metaLine(info)}</span> <Badge tone={mediaStatus(info.status).tone}>{mediaStatus(info.status).label}</Badge>
                 </div>
               </>
             ) : (
-              <div className="small muted">AniList id {series.anilist_id}</div>
+              <div className="small muted">
+                {label} id {series.metadata_id}
+              </div>
             )}
             {href ? (
               <div className="small">
                 <a href={href} target="_blank" rel="noopener noreferrer">
-                  View on AniList
+                  View on {label}
                 </a>
               </div>
             ) : null}
-            <p className="small muted">Metadata only: matching uses the series name and aliases, never AniList directly.</p>
+            <p className="small muted">Metadata only: matching uses the series name and aliases, never {label} directly.</p>
           </div>
         </div>
       ) : !searching ? (
-        <p className="small muted">Not linked. Link it to show a cover and pull extra title aliases from AniList (existing aliases are kept).</p>
+        <p className="small muted">
+          Not linked. Link it to AniList (anime) or TMDB (TV) to show a cover, pull extra title aliases (existing aliases are kept) and link season 1 for
+          episode metadata.
+        </p>
       ) : null}
       {searching ? (
         <div className="subcard">
-          <AnilistSearch
+          <MetadataSearch
             onPick={pick}
-            pendingId={link.isPending && typeof link.variables === 'number' ? link.variables : null}
-            selectedId={series.anilist_id}
+            pendingKey={pendingKey}
+            selectedKey={mediaKey(series.metadata_provider, series.metadata_id)}
             pickLabel="Link"
             initialQuery={series.name}
+            defaultProvider={series.metadata_provider}
             autoFocus
           />
         </div>
@@ -495,6 +509,8 @@ export default function SeriesDetail() {
   const series = useSeries(id);
   const update = useUpdateSeries();
   const del = useDeleteSeries();
+  const providersQ = useMetadataProviders();
+  const providers = providersQ.data?.items ?? [];
   const [editing, setEditing] = useState(false);
 
   if (!Number.isFinite(id)) return <ErrorBanner error="Invalid series id" />;
@@ -552,8 +568,11 @@ export default function SeriesDetail() {
           <SeriesForm series={s} onDone={() => setEditing(false)} />
         </Card>
       ) : null}
-      <AnilistCard series={s} />
+      <MetadataCard series={s} providers={providers} />
       <SeasonsCard series={s} />
+      {sortSeasons(s.seasons).map((se) => (
+        <SeasonEpisodesCard key={se.id} series={s} season={se} providers={providers} />
+      ))}
       <RulesCard series={s} />
       <PathsCard seriesId={s.id} />
     </>

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from app.api.calendar import calendar_items
 from app.api.deps import AUTH, Session, Settings, get_db, get_settings
 from app.api.downloads import with_relations
 from app.api.feeds import entry_counts
@@ -21,9 +22,12 @@ from app.schemas import (
     FeedEntryOut,
     FeedSourceOut,
 )
-from app.services import scheduler, settings_store
+from app.services import episodes, scheduler, settings_store
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"], dependencies=AUTH)
+
+UPCOMING_DAYS = 7
+UPCOMING_MAX = 10
 
 
 def _n(db: Session, stmt) -> int:  # type: ignore[no-untyped-def]
@@ -32,7 +36,8 @@ def _n(db: Session, stmt) -> int:  # type: ignore[no-untyped-def]
 
 @router.get("", response_model=DashboardOut)
 def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> DashboardOut:
-    since = utcnow() - timedelta(hours=24)
+    now = utcnow()
+    since = now - timedelta(hours=24)
     counts_by_feed = entry_counts(db)
     feeds = [
         FeedSourceOut.from_model(f, counts_by_feed.get(f.id, 0))
@@ -55,7 +60,9 @@ def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_se
         ),
         downloads_pending=_n(db, select(cnt).select_from(Download).where(Download.status == "pending")),
         downloads_failed=_n(db, select(cnt).select_from(Download).where(Download.status == "failed")),
+        wanted=len(episodes.wanted(db)),
     )
+    upcoming = episodes.calendar(db, now, now + timedelta(days=UPCOMING_DAYS), monitored_only=True, limit=UPCOMING_MAX)
     recent = db.scalars(with_relations(select(Download).order_by(Download.id.desc()).limit(10)))
     failed = db.scalars(
         with_relations(
@@ -80,4 +87,5 @@ def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_se
         recent_entries=[FeedEntryOut.from_model(e) for e in entries],
         qbit=DashboardQbit(configured=creds.configured, last_test=settings_store.get_qbit_last_test(db)),
         scheduler=DashboardScheduler(running=scheduler.is_running(), next_feed_poll_at=scheduler.next_feed_poll_at()),
+        upcoming=calendar_items(upcoming),
     )

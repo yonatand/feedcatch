@@ -74,3 +74,11 @@ export function percent(p: number | null | undefined): string {
   if (p === null || p === undefined) return '—';
   return `${Math.round(p * 1000) / 10}%`;
 }
+
+/** Local date like "Oct 14, 2026" (air dates). */
+export function formatAirDate(iso: string | null): string {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}

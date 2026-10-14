@@ -1,7 +1,8 @@
-"""AniList GraphQL client (metadata only) and the series-suggestion helper.
+"""AniList GraphQL client + the `anilist` metadata provider (anime), with Jikan as a best-effort episode-title fallback.
 
-See `.claude/rules/anilist.md`. Fixed host (no SSRF check needed), explicit timeouts, a small module-level TTL cache
-so repeated UI keystrokes do not burn AniList's 30 requests/minute budget.
+See `.claude/rules/anilist.md`, `.claude/rules/metadata.md`, `.claude/rules/episodes.md`. Fixed hosts (no SSRF check
+needed), explicit timeouts, a small module-level TTL cache so repeated UI keystrokes do not burn AniList's 30
+requests/minute budget.
 """
 
 from __future__ import annotations
@@ -10,13 +11,22 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 import structlog
 
 from app import __version__
-from app.services import paths
+from app.services.metadata.base import (
+    EpisodeInfo,
+    Kind,
+    MediaDetail,
+    MediaResult,
+    MetadataError,
+    RelatedInfo,
+    SeasonInfo,
+)
 
 log = structlog.get_logger("anilist")
 
@@ -28,7 +38,7 @@ MAX_SEARCH_LIMIT = 50
 
 _MEDIA_FIELDS = (
     "id title{romaji english native} synonyms format status season seasonYear episodes "
-    "coverImage{medium large} siteUrl "
+    "coverImage{medium large} siteUrl startDate{year month day} "
     "relations{edges{relationType node{id title{romaji english} format episodes seasonYear status}}}"
 )
 SEARCH_QUERY = (
@@ -36,23 +46,31 @@ SEARCH_QUERY = (
     f"media(search: $q, type: ANIME, sort: SEARCH_MATCH) {{ {_MEDIA_FIELDS} }} }} }}"
 )
 DETAIL_QUERY = f"query ($id: Int) {{ Media(id: $id, type: ANIME) {{ {_MEDIA_FIELDS} }} }}"
+EPISODES_QUERY = (
+    "query ($id: Int, $page: Int) { Media(id: $id, type: ANIME) { id episodes idMal status "
+    "nextAiringEpisode{episode airingAt} airingSchedule(page: $page, perPage: 50){ pageInfo{hasNextPage} "
+    "nodes{episode airingAt} } streamingEpisodes{title site url} } }"
+)
+MAX_AIRING_PAGES = 12
+_STREAMING_TITLE = re.compile(r"^Episode\s+(\d+)\s*[-:]\s*(.+)$")
+
+JIKAN_URL = "https://api.jikan.moe/v4/anime/{mal_id}/episodes"
+JIKAN_TIMEOUT_SECONDS = 8.0
+JIKAN_MAX_PAGES = 5
+JIKAN_PAGE_DELAY_SECONDS = 0.4  # tests set 0
 
 RELATED_TYPES = frozenset({"SEQUEL", "PREQUEL", "PARENT", "SIDE_STORY", "ALTERNATIVE"})
 RELATED_FORMATS = frozenset({"TV", "TV_SHORT", "ONA", "OVA", "MOVIE", "SPECIAL"})
 _SERIAL_FORMATS = frozenset({"TV", "TV_SHORT", "ONA"})
-_ASCII_LETTER = re.compile(r"[A-Za-z]")
 
 
-class AnilistError(Exception):
+class AnilistError(MetadataError):
     """AniList call failed. `transient` = worth retrying later; `retry_after` set on 429; `not_found` on unknown id."""
 
     def __init__(
         self, message: str, transient: bool = False, retry_after: int | None = None, not_found: bool = False
     ) -> None:
-        super().__init__(message)
-        self.transient = transient
-        self.retry_after = retry_after
-        self.not_found = not_found
+        super().__init__(message, transient=transient, retry_after=retry_after, not_found=not_found)
 
 
 # ---------------------------------------------------------------- data
@@ -68,7 +86,6 @@ class AnilistRelated:
     episodes: int | None
     season_year: int | None
     status: str | None
-    suggested_season_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -86,22 +103,12 @@ class AnilistMedia:
     cover_medium: str | None
     cover_large: str | None
     site_url: str | None
+    start_date: str | None = None  # YYYY-MM-DD (YYYY-MM / YYYY when partial)
 
 
 @dataclass(frozen=True)
 class AnilistMediaDetail(AnilistMedia):
     related: list[AnilistRelated] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class AnilistSuggestion:
-    anilist_id: int
-    name: str
-    aliases: list[str]
-    cover_url: str | None
-    anilist: dict[str, Any]
-    seasons: list[dict[str, Any]]
-    related: list[AnilistRelated]
 
 
 def _str(v: Any) -> str | None:
@@ -110,6 +117,20 @@ def _str(v: Any) -> str | None:
 
 def _int(v: Any) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _date(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    y, m, d = _int(raw.get("year")), _int(raw.get("month")), _int(raw.get("day"))
+    if y is None:
+        return None
+    out = f"{y:04d}"
+    if m is not None:
+        out += f"-{m:02d}"
+        if d is not None:
+            out += f"-{d:02d}"
+    return out
 
 
 def parse_media(raw: dict[str, Any]) -> AnilistMediaDetail:
@@ -152,27 +173,14 @@ def parse_media(raw: dict[str, Any]) -> AnilistMediaDetail:
         cover_medium=_str(cover.get("medium")),
         cover_large=_str(cover.get("large")),
         site_url=_str(raw.get("siteUrl")),
+        start_date=_date(raw.get("startDate")),
         related=related,
     )
 
 
 def as_media(detail: AnilistMediaDetail) -> AnilistMedia:
     """Drop `related` (search results are plain media)."""
-    return AnilistMedia(
-        id=detail.id,
-        title_romaji=detail.title_romaji,
-        title_english=detail.title_english,
-        title_native=detail.title_native,
-        synonyms=list(detail.synonyms),
-        format=detail.format,
-        status=detail.status,
-        season=detail.season,
-        season_year=detail.season_year,
-        episodes=detail.episodes,
-        cover_medium=detail.cover_medium,
-        cover_large=detail.cover_large,
-        site_url=detail.site_url,
-    )
+    return AnilistMedia(**{f: getattr(detail, f) for f in AnilistMedia.__dataclass_fields__})
 
 
 # ---------------------------------------------------------------- cache
@@ -326,41 +334,131 @@ class AnilistClient:
         _cache_put(key, detail)
         return detail
 
+    def episodes(self, anilist_id: int) -> dict[str, Any]:
+        """`{episodes, idMal, status, airing: {ep: airingAt}, titles: {ep: title}}`.
 
-# ---------------------------------------------------------------- suggestion
+        airingSchedule is paginated (max 12 pages); titles come from `streamingEpisodes` ("Episode 3 - Title").
+        """
+        key = f"episodes:{int(anilist_id)}"
+        cached = _cache_get(key)
+        if cached is not None:
+            return dict(cached)
+        airing: dict[int, int] = {}
+        titles: dict[int, str] = {}
+        media: dict[str, Any] = {}
+        for page in range(1, MAX_AIRING_PAGES + 1):
+            data = self._post(EPISODES_QUERY, {"id": int(anilist_id), "page": page})
+            raw = data.get("Media")
+            if raw is None:
+                raise AnilistError("AniList entry not found", not_found=True)
+            if page == 1:
+                media = raw
+                for se in raw.get("streamingEpisodes") or []:
+                    m = _STREAMING_TITLE.match(str((se or {}).get("title") or "").strip())
+                    if m:
+                        titles.setdefault(int(m.group(1)), m.group(2).strip())
+            sched = raw.get("airingSchedule") or {}
+            for node in sched.get("nodes") or []:
+                ep, at = _int((node or {}).get("episode")), _int((node or {}).get("airingAt"))
+                if ep is not None and at is not None:
+                    airing[ep] = at
+            if not (sched.get("pageInfo") or {}).get("hasNextPage"):
+                break
+        out = {
+            "episodes": _int(media.get("episodes")),
+            "idMal": _int(media.get("idMal")),
+            "status": _str(media.get("status")),
+            "airing": airing,
+            "titles": titles,
+        }
+        _cache_put(key, out)
+        return dict(out)
 
 
-def info_of(detail: AnilistMedia) -> dict[str, Any]:
-    """The JSON stored on `series.anilist_json`."""
-    return {
-        "title_romaji": detail.title_romaji,
-        "title_english": detail.title_english,
-        "title_native": detail.title_native,
-        "format": detail.format,
-        "status": detail.status,
-        "season_year": detail.season_year,
-        "episodes": detail.episodes,
-        "site_url": detail.site_url,
-    }
+# ---------------------------------------------------------------- Jikan (best effort)
 
 
-def suggested_related(detail: AnilistMediaDetail) -> list[AnilistRelated]:
+def _parse_iso(v: Any) -> datetime | None:
+    if not isinstance(v, str) or not v.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
+def fetch_jikan_episodes(
+    mal_id: int, transport: httpx.BaseTransport | None = None
+) -> dict[int, tuple[str | None, datetime | None]]:
+    """{episode: (title, aired)} from Jikan. Never raises and never retries: a failure ends the run."""
+    out: dict[int, tuple[str | None, datetime | None]] = {}
+    headers = {"Accept": "application/json", "User-Agent": f"feedcatch/{__version__}"}
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(JIKAN_TIMEOUT_SECONDS), follow_redirects=False, transport=transport
+        ) as client:
+            for page in range(1, JIKAN_MAX_PAGES + 1):
+                if page > 1 and JIKAN_PAGE_DELAY_SECONDS:
+                    time.sleep(JIKAN_PAGE_DELAY_SECONDS)
+                resp = client.get(JIKAN_URL.format(mal_id=int(mal_id)), params={"page": page}, headers=headers)
+                if resp.status_code != 200:
+                    log.warning("jikan_http_error", mal_id=mal_id, status=resp.status_code, page=page)
+                    break
+                body = resp.json()
+                for item in body.get("data") or []:
+                    ep = _int((item or {}).get("mal_id"))
+                    if ep is not None:
+                        out[ep] = (_str(item.get("title")), _parse_iso(item.get("aired")))
+                if not (body.get("pagination") or {}).get("has_next_page"):
+                    break
+    except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:
+        log.warning("jikan_failed", mal_id=mal_id, error=f"{type(exc).__name__}: {exc}"[:200])
+    return out
+
+
+# ---------------------------------------------------------------- provider
+
+
+def to_result(d: AnilistMedia) -> MediaResult:
+    title = d.title_english or d.title_romaji or d.title_native
+    alt: list[str] = []
+    for t in (d.title_romaji, d.title_english, *d.synonyms):
+        if t and t != title and t not in alt:
+            alt.append(t)
+    return MediaResult(
+        provider="anilist",
+        id=str(d.id),
+        title=title,
+        original_title=d.title_native,
+        alt_titles=alt,
+        kind="anime",
+        format=d.format,
+        status=d.status,
+        year=d.season_year,
+        episodes=d.episodes,
+        cover_url=d.cover_large or d.cover_medium,
+        site_url=d.site_url,
+    )
+
+
+def suggested_related(detail: AnilistMediaDetail) -> list[RelatedInfo]:
     """Relations worth offering as extra seasons: anime only, sequel/prequel/parent/side-story/alternative."""
-    out: list[AnilistRelated] = []
+    out: list[RelatedInfo] = []
     for r in detail.related:
         if r.relation_type not in RELATED_TYPES or r.format not in RELATED_FORMATS:
             continue
         # A direct serial sequel of the suggested season 1 is season 2; anything else is left to the user.
         number = 2 if r.relation_type == "SEQUEL" and r.format in _SERIAL_FORMATS else None
         out.append(
-            AnilistRelated(
+            RelatedInfo(
                 relation_type=r.relation_type,
-                id=r.id,
-                title_romaji=r.title_romaji,
-                title_english=r.title_english,
+                provider="anilist",
+                id=str(r.id),
+                title=r.title_english or r.title_romaji,
                 format=r.format,
                 episodes=r.episodes,
-                season_year=r.season_year,
+                year=r.season_year,
                 status=r.status,
                 suggested_season_number=number,
             )
@@ -368,44 +466,81 @@ def suggested_related(detail: AnilistMediaDetail) -> list[AnilistRelated]:
     return out
 
 
-def build_suggestion(detail: AnilistMediaDetail) -> AnilistSuggestion:
-    """Prefill for a new series: folder-safe name, Latin-script aliases, one season, related entries."""
-    raw_name = detail.title_english or detail.title_romaji or detail.title_native or f"AniList {detail.id}"
-    try:
-        name = paths.sanitize_component(raw_name)
-    except paths.PathError:
-        name = f"AniList {detail.id}"
-
-    candidates: list[str] = []
-    if name != raw_name:
-        candidates.append(raw_name)
-    candidates += [t for t in (detail.title_romaji, detail.title_english) if t]
-    candidates += detail.synonyms
-
-    seen = {name.casefold()}
-    aliases: list[str] = []
-    for c in candidates:
-        c = " ".join(c.split())
-        if not c or not _ASCII_LETTER.search(c) or c.casefold() in seen:
-            continue
-        seen.add(c.casefold())
-        aliases.append(c)
-
-    seasons = [
-        {
-            "season_number": 1,
-            "episode_min": None,
-            "episode_max": detail.episodes,
-            "absolute_min": None,
-            "absolute_max": None,
-        }
-    ]
-    return AnilistSuggestion(
-        anilist_id=detail.id,
-        name=name,
-        aliases=aliases,
-        cover_url=detail.cover_large or detail.cover_medium,
-        anilist=info_of(detail),
-        seasons=seasons,
-        related=suggested_related(detail),
+def to_detail(d: AnilistMediaDetail) -> MediaDetail:
+    base = to_result(d)
+    return MediaDetail(
+        **{f: getattr(base, f) for f in MediaResult.__dataclass_fields__},
+        seasons=[SeasonInfo(season_number=1, name=None, episode_count=d.episodes, air_date=d.start_date)],
+        related=suggested_related(d),
     )
+
+
+def parse_id(media_id: str | int) -> int:
+    try:
+        n = int(str(media_id).strip())
+    except ValueError as exc:
+        raise AnilistError("AniList entry not found (ids are numbers)", not_found=True) from exc
+    if n <= 0:
+        raise AnilistError("AniList entry not found (ids are numbers)", not_found=True)
+    return n
+
+
+class AnilistProvider:
+    name = "anilist"
+    label = "AniList"
+    kind: Kind = "anime"
+
+    def __init__(self, client: AnilistClient | None = None, jikan: bool = True) -> None:
+        self.client = client or AnilistClient()
+        self.jikan = jikan
+
+    def search(self, q: str, limit: int = 10) -> list[MediaResult]:
+        return [to_result(m) for m in self.client.search(q, limit)]
+
+    def detail(self, media_id: str) -> MediaDetail:
+        return to_detail(self.client.get(parse_id(media_id)))
+
+    def episodes(self, media_id: str, season_number: int) -> list[EpisodeInfo]:
+        """All known episodes of one AniList entry. `season_number` is ignored (one AniList entry = one season)."""
+        raw = self.client.episodes(parse_id(media_id))
+        airing: dict[int, int] = raw["airing"]
+        titles: dict[int, str] = dict(raw["titles"])
+        numbers = set(airing) | set(titles)
+        if raw.get("episodes"):
+            numbers |= set(range(1, int(raw["episodes"]) + 1))
+        dates: dict[int, datetime | None] = {
+            n: (datetime.fromtimestamp(airing[n], tz=UTC) if n in airing else None) for n in numbers
+        }
+        now = datetime.now(UTC)
+        latest_aired = max((n for n, dt in dates.items() if dt is not None and dt <= now), default=0)
+        finished = raw.get("status") == "FINISHED"
+
+        def has_aired(n: int) -> bool:
+            dt = dates.get(n)
+            if dt is not None:
+                return dt <= now
+            return finished or n < latest_aired
+
+        gaps = [n for n in numbers if has_aired(n) and (n not in titles or dates.get(n) is None)]
+        jikan_titles: set[int] = set()
+        mal_id = raw.get("idMal")
+        if gaps and mal_id and self.jikan:
+            for n, (title, aired) in fetch_jikan_episodes(int(mal_id)).items():
+                if n not in numbers and not finished and n > latest_aired:
+                    continue  # never invent future episodes from Jikan
+                numbers.add(n)
+                if title and n not in titles:
+                    titles[n] = title
+                    jikan_titles.add(n)
+                if aired is not None and dates.get(n) is None:
+                    dates[n] = aired
+        return [
+            EpisodeInfo(
+                number=n,
+                title=titles.get(n),
+                air_date=dates.get(n),
+                source="jikan" if n in jikan_titles else "anilist",
+            )
+            for n in sorted(numbers)
+            if n > 0
+        ]

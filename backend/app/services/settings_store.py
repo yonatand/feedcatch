@@ -37,7 +37,14 @@ QBIT_TIMEOUT_SECONDS = "qbit_timeout_seconds"
 QBIT_START_IMMEDIATELY = "qbit_start_immediately"
 QBIT_POLL_STATUS = "qbit_poll_status"
 QBIT_LAST_TEST_JSON = "qbit_last_test_json"
-DEMO_SEEDED = "demo_seeded"
+DEMO_SEEDED = "demo_seeded"  # legacy key (old demo seed); kept so existing DBs stay readable
+FEED_SEEDED = "feed_seeded"
+ANIMETOSHO_TEMPLATE_BACKFILLED = "animetosho_template_backfilled"
+AUTO_SEARCH_MISSING = "auto_search_missing"
+SEARCH_INTERVAL_HOURS = "search_interval_hours"
+METADATA_REFRESH_HOURS = "metadata_refresh_hours"
+SEARCH_DELAY_SECONDS = "search_delay_seconds"
+TMDB_API_KEY = "tmdb_api_key"  # Fernet-encrypted
 
 DEFAULTS: dict[str, Any] = {
     MEDIA_BASE_PATH: DEFAULT_MEDIA_BASE,
@@ -52,6 +59,10 @@ DEFAULTS: dict[str, Any] = {
     QBIT_TIMEOUT_SECONDS: 15,
     QBIT_START_IMMEDIATELY: True,
     QBIT_POLL_STATUS: True,
+    AUTO_SEARCH_MISSING: False,
+    SEARCH_INTERVAL_HOURS: 24,
+    METADATA_REFRESH_HOURS: 12,
+    SEARCH_DELAY_SECONDS: 3,
 }
 
 _MISSING: Any = object()
@@ -111,6 +122,28 @@ def allow_private_feed_hosts(db: Session, settings: Settings) -> bool:
     return bool(get(db, ALLOW_PRIVATE_FEED_HOSTS))
 
 
+def get_int(db: Session, key: str, minimum: int = 0) -> int:
+    """Integer setting with a fallback to DEFAULTS when the stored value is unusable."""
+    try:
+        value = int(get(db, key))
+    except (TypeError, ValueError):
+        value = int(DEFAULTS[key])
+    return max(minimum, value)
+
+
+def get_tmdb_api_key(db: Session, settings: Settings) -> str:
+    """Effective TMDB key (env `TMDB_API_KEY` wins); "" when not configured. Never log the result."""
+    if settings.TMDB_API_KEY is not None:
+        return settings.TMDB_API_KEY.strip()
+    enc = get(db, TMDB_API_KEY, None)
+    if not enc:
+        return ""
+    try:
+        return crypto.decrypt(str(enc), settings)
+    except crypto.CryptoError:
+        return ""
+
+
 def get_app_settings(db: Session, settings: Settings) -> AppSettingsOut:
     v = get_many(
         db,
@@ -120,11 +153,17 @@ def get_app_settings(db: Session, settings: Settings) -> AppSettingsOut:
             DUPLICATE_POLICY,
             FEED_FETCH_TIMEOUT_SECONDS,
             LOG_RETENTION_DAYS,
+            AUTO_SEARCH_MISSING,
+            SEARCH_INTERVAL_HOURS,
+            METADATA_REFRESH_HOURS,
+            SEARCH_DELAY_SECONDS,
         ],
     )
-    sources: dict[str, str] = {k: "db" for k in (*v.keys(), ALLOW_PRIVATE_FEED_HOSTS)}
+    sources: dict[str, str] = {k: "db" for k in (*v.keys(), ALLOW_PRIVATE_FEED_HOSTS, TMDB_API_KEY)}
     if settings.ALLOW_PRIVATE_FEED_HOSTS is not None:
         sources[ALLOW_PRIVATE_FEED_HOSTS] = "env"
+    if settings.TMDB_API_KEY is not None:
+        sources[TMDB_API_KEY] = "env"
     return AppSettingsOut(
         media_base_path=v[MEDIA_BASE_PATH],
         default_season_folder_format=v[DEFAULT_SEASON_FOLDER_FORMAT_KEY],
@@ -132,6 +171,11 @@ def get_app_settings(db: Session, settings: Settings) -> AppSettingsOut:
         allow_private_feed_hosts=allow_private_feed_hosts(db, settings),
         feed_fetch_timeout_seconds=int(v[FEED_FETCH_TIMEOUT_SECONDS]),
         log_retention_days=int(v[LOG_RETENTION_DAYS]),
+        auto_search_missing=bool(v[AUTO_SEARCH_MISSING]),
+        search_interval_hours=get_int(db, SEARCH_INTERVAL_HOURS, 1),
+        metadata_refresh_hours=get_int(db, METADATA_REFRESH_HOURS, 1),
+        search_delay_seconds=get_int(db, SEARCH_DELAY_SECONDS, 0),
+        tmdb_api_key_set=bool(get_tmdb_api_key(db, settings)),
         sources=sources,  # type: ignore[arg-type]
     )
 
@@ -144,6 +188,17 @@ def set_app_settings(db: Session, settings: Settings, data: AppSettingsIn) -> Ap
     set(db, DUPLICATE_POLICY, data.duplicate_policy)
     set(db, FEED_FETCH_TIMEOUT_SECONDS, data.feed_fetch_timeout_seconds)
     set(db, LOG_RETENTION_DAYS, data.log_retention_days)
+    sent = data.model_fields_set
+    for key in (AUTO_SEARCH_MISSING, SEARCH_INTERVAL_HOURS, METADATA_REFRESH_HOURS, SEARCH_DELAY_SECONDS):
+        if key in sent:
+            set(db, key, getattr(data, key))
+    if data.tmdb_api_key is not None:
+        if settings.TMDB_API_KEY is not None:
+            warnings.append("tmdb_api_key is set by environment variable TMDB_API_KEY; ignored")
+        elif data.tmdb_api_key.strip() == "":
+            delete(db, TMDB_API_KEY)
+        else:
+            set(db, TMDB_API_KEY, crypto.encrypt(data.tmdb_api_key.strip(), settings))
     if settings.ALLOW_PRIVATE_FEED_HOSTS is not None:
         if data.allow_private_feed_hosts != settings.ALLOW_PRIVATE_FEED_HOSTS:
             warnings.append("allow_private_feed_hosts is set by environment variable ALLOW_PRIVATE_FEED_HOSTS; ignored")
