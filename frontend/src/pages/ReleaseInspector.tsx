@@ -4,7 +4,7 @@ import { useEntry, useEvaluateEntry, useSeriesList } from '../api/hooks';
 import type { Evaluation, FeedEntryDetail } from '../api/types';
 import { ConditionsTable } from '../components/ConditionsTable';
 import { CopyButton } from '../components/CopyButton';
-import { DownloadsTable } from '../components/DownloadsTable';
+import { DeleteDownloadButton, DownloadsTable } from '../components/DownloadsTable';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { FormField } from '../components/FormField';
 import { GrabFlow, type GrabTarget } from '../components/GrabFlow';
@@ -259,7 +259,11 @@ export default function ReleaseInspector() {
       </Card>
       <GrabCard key={e.id} e={e} />
       <Card title="Downloads for this release">
-        <DownloadsTable items={e.downloads} emptyText="This release has not been sent to qBittorrent." />
+        <DownloadsTable
+          items={e.downloads}
+          emptyText="This release has not been sent to qBittorrent."
+          renderActions={(d) => <DeleteDownloadButton id={d.id} what={`${d.series_name} ${seasonEpisode(d.season_number, d.episode_number)}`} />}
+        />
       </Card>
     </>
   );

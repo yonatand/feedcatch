@@ -8,9 +8,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import AUTH, Session, Settings, get_db, get_settings
-from app.schemas import ItemsOut, MediaDetailOut, MediaResultOut, MetadataProviderOut, SuggestionOut
+from app.schemas import (
+    BackfillSeasonLinksOut,
+    ItemsOut,
+    MediaDetailOut,
+    MediaResultOut,
+    MetadataProviderOut,
+    SuggestionOut,
+)
 from app.services import metadata
-from app.services.metadata import MetadataError, MetadataProvider
+from app.services.metadata import MetadataError, MetadataProvider, backfill
 
 router = APIRouter(prefix="/api/metadata", tags=["metadata"], dependencies=AUTH)
 
@@ -46,6 +53,14 @@ def providers(
     return ItemsOut[MetadataProviderOut](
         items=[MetadataProviderOut.model_validate(p) for p in metadata.list_providers(db, settings)]
     )
+
+
+@router.post("/backfill-season-links", response_model=BackfillSeasonLinksOut)
+def backfill_season_links(
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> BackfillSeasonLinksOut:
+    """Link unlinked seasons of linked series (season 1, AniList SEQUEL chain, TMDB season numbers) and refresh them."""
+    return BackfillSeasonLinksOut.model_validate(backfill.backfill_season_links(db, settings))
 
 
 @router.get("/search", response_model=ItemsOut[MediaResultOut])

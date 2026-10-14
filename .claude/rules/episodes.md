@@ -107,3 +107,16 @@ Season summary: `episode_count`, `downloaded_count`, `missing_count` (missing = 
 - Seasons without metadata return an empty episode list. Fields omitted by older clients are kept, not wiped.
 - Live verified 2026-10-14 (feedcatch image + qBittorrent 5.2.4 + AniList + AnimeTosho search): Black Clover S2 linked to 195604 -> 12 episodes, E01/E02 missing ->
   search `Black Clover S02` -> DKB candidates -> grab-missing -> both `submitted` at `/home/qbittorrent-nox/media/Black Clover/Season 02`; calendar/wanted/dashboard consistent.
+
+## Fixes decided 2026-10-14 (after the first user report "getting the episode list doesn't work")
+- Root cause 1: after upgrading from 0002, the series link migrates but seasons stay unlinked -> empty list + 400 "season is not linked". Fix:
+  (a) startup task `backfill_season_links` (once per season, best effort, logged): for every series with a metadata link, link season 1 to the series entry when
+  unlinked (anilist and tmdb); for anilist, link other unlinked seasons N when the series detail's related list has a SEQUEL with suggested_season_number == N
+  (chain: follow SEQUEL of SEQUEL up to 5 hops to find season N; each hop one cached detail call); for tmdb, link every unlinked season whose number exists upstream.
+  Then schedule an immediate metadata refresh for newly linked seasons. (b) UI: an unlinked season shows a prominent call-to-action card
+  "Link this season to AniList/TMDB to see its episodes" with the inline MetadataSearch, instead of an empty table.
+- Root cause 2: Jikan unreachable costs 8 s per refresh ("Network is unreachable" after the full timeout). Fix: connect timeout 3 s, read 8 s; after any Jikan
+  failure, skip Jikan for 6 h (module-level backoff, reset by `JIKAN_ENABLED` toggle or restart); log once per backoff window.
+- Downloads can be deleted: `DELETE /api/downloads/{id}` removes feedcatch's record only (the torrent stays in qBittorrent; invariant 6). After deletion the episode
+  becomes `missing` again and can be re-grabbed. UI: "Delete" with inline confirm on the Downloads page and in the episode row's download popover; the confirm text says
+  the torrent is not removed from qBittorrent.

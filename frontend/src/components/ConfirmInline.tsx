@@ -9,6 +9,10 @@ type Props = {
   disabled?: boolean;
   pending?: boolean;
   size?: 'sm' | 'md';
+  /** Accessible name of the first button when `label` alone is ambiguous (e.g. one "Delete" per table row). */
+  ariaLabel?: string;
+  /** Let a long message wrap even inside tables (where confirm groups otherwise stay on one line). */
+  wrap?: boolean;
 };
 
 /** Two-step inline confirmation; replaces window.confirm for destructive actions. */
@@ -21,6 +25,8 @@ export function ConfirmInline({
   disabled,
   pending,
   size = 'sm',
+  ariaLabel,
+  wrap = false,
 }: Props) {
   const [armed, setArmed] = useState(false);
   const sz = size === 'sm' ? ' btn-sm' : '';
@@ -30,6 +36,7 @@ export function ConfirmInline({
         type="button"
         className={`btn${sz}${danger ? ' btn-danger-outline' : ''}`}
         disabled={disabled || pending}
+        aria-label={ariaLabel}
         onClick={() => setArmed(true)}
       >
         {pending ? '…' : label}
@@ -37,7 +44,7 @@ export function ConfirmInline({
     );
   }
   return (
-    <span className="confirm-inline" role="group" aria-label={`Confirm ${label}`}>
+    <span className={`confirm-inline${wrap ? ' confirm-wrap' : ''}`} role="group" aria-label={`Confirm ${ariaLabel ?? label}`}>
       {message ? <span className="confirm-msg">{message}</span> : null}
       <button
         type="button"

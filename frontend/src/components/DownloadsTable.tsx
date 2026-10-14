@@ -1,5 +1,8 @@
 import { Link } from 'react-router-dom';
+import { errorMessage } from '../api/client';
+import { useDeleteDownload } from '../api/hooks';
 import type { Download } from '../api/types';
+import { ConfirmInline } from './ConfirmInline';
 import { normPath, percent, seasonEpisode } from '../lib/format';
 import { Badge, StatusBadge } from './StatusBadge';
 import { EmptyRow, TableWrap } from './Table';
@@ -22,6 +25,32 @@ export function SavePaths({ d }: { d: Download }) {
       </div>
       {mismatch ? <div className="small warn-text">qBittorrent reports a different save path</div> : null}
     </div>
+  );
+}
+
+export const DELETE_DOWNLOAD_MESSAGE =
+  "Removes feedcatch's record only; the torrent stays in qBittorrent. The episode becomes missing again.";
+
+/** "Delete" + inline confirm for one download record (DELETE /api/downloads/{id}); never touches qBittorrent. */
+export function DeleteDownloadButton({ id, what, onDeleted }: { id: number; what: string; onDeleted?: () => void }) {
+  const del = useDeleteDownload();
+  return (
+    <>
+      <ConfirmInline
+        label="Delete"
+        confirmLabel="Delete record"
+        ariaLabel={`Delete download record for ${what}`}
+        message={DELETE_DOWNLOAD_MESSAGE}
+        pending={del.isPending}
+        wrap
+        onConfirm={() => del.mutate(id, { onSuccess: onDeleted })}
+      />
+      {del.error ? (
+        <span className="small err-text" role="alert">
+          Delete failed: {errorMessage(del.error)}
+        </span>
+      ) : null}
+    </>
   );
 }
 

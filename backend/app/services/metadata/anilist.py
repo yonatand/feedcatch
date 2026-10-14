@@ -55,7 +55,9 @@ MAX_AIRING_PAGES = 12
 _STREAMING_TITLE = re.compile(r"^Episode\s+(\d+)\s*[-:]\s*(.+)$")
 
 JIKAN_URL = "https://api.jikan.moe/v4/anime/{mal_id}/episodes"
-JIKAN_TIMEOUT_SECONDS = 8.0
+JIKAN_TIMEOUT_SECONDS = 8.0  # read
+JIKAN_CONNECT_TIMEOUT_SECONDS = 3.0
+JIKAN_BACKOFF_SECONDS = 6 * 3600.0  # skip Jikan for 6 h after any failure (episodes.md, fixes 2026-10-14)
 JIKAN_MAX_PAGES = 5
 JIKAN_PAGE_DELAY_SECONDS = 0.4  # tests set 0
 
@@ -388,22 +390,61 @@ def _parse_iso(v: Any) -> datetime | None:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
+# Module-level backoff (process-local, reset on restart): monotonic deadline until which Jikan is skipped.
+jikan_backoff_until = 0.0
+_jikan_skip_logged = False
+_jikan_lock = threading.Lock()
+
+
+def _jikan_clock() -> float:
+    return time.monotonic()
+
+
+def reset_jikan_backoff() -> None:
+    global jikan_backoff_until, _jikan_skip_logged
+    with _jikan_lock:
+        jikan_backoff_until = 0.0
+        _jikan_skip_logged = False
+
+
+def jikan_in_backoff() -> bool:
+    """True while in a backoff window; logs one info line per window."""
+    global _jikan_skip_logged
+    with _jikan_lock:
+        if _jikan_clock() >= jikan_backoff_until:
+            return False
+        if not _jikan_skip_logged:
+            _jikan_skip_logged = True
+            log.info("jikan_backoff_skip", remaining_seconds=round(jikan_backoff_until - _jikan_clock()))
+        return True
+
+
+def _jikan_failed(mal_id: int, **fields: Any) -> None:
+    global jikan_backoff_until, _jikan_skip_logged
+    with _jikan_lock:
+        jikan_backoff_until = _jikan_clock() + JIKAN_BACKOFF_SECONDS
+        _jikan_skip_logged = False
+    log.warning("jikan_failed", mal_id=mal_id, backoff_hours=JIKAN_BACKOFF_SECONDS / 3600, **fields)
+
+
 def fetch_jikan_episodes(
     mal_id: int, transport: httpx.BaseTransport | None = None
 ) -> dict[int, tuple[str | None, datetime | None]]:
-    """{episode: (title, aired)} from Jikan. Never raises and never retries: a failure ends the run."""
+    """{episode: (title, aired)} from Jikan. Never raises and never retries: a failure ends the run and starts a
+    6 h backoff during which Jikan is skipped (returns {})."""
     out: dict[int, tuple[str | None, datetime | None]] = {}
+    if jikan_in_backoff():
+        return out
     headers = {"Accept": "application/json", "User-Agent": f"feedcatch/{__version__}"}
+    timeout = httpx.Timeout(JIKAN_TIMEOUT_SECONDS, connect=JIKAN_CONNECT_TIMEOUT_SECONDS)
     try:
-        with httpx.Client(
-            timeout=httpx.Timeout(JIKAN_TIMEOUT_SECONDS), follow_redirects=False, transport=transport
-        ) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport) as client:
             for page in range(1, JIKAN_MAX_PAGES + 1):
                 if page > 1 and JIKAN_PAGE_DELAY_SECONDS:
                     time.sleep(JIKAN_PAGE_DELAY_SECONDS)
                 resp = client.get(JIKAN_URL.format(mal_id=int(mal_id)), params={"page": page}, headers=headers)
                 if resp.status_code != 200:
-                    log.warning("jikan_http_error", mal_id=mal_id, status=resp.status_code, page=page)
+                    _jikan_failed(mal_id, status=resp.status_code, page=page)
                     break
                 body = resp.json()
                 for item in body.get("data") or []:
@@ -413,7 +454,7 @@ def fetch_jikan_episodes(
                 if not (body.get("pagination") or {}).get("has_next_page"):
                     break
     except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:
-        log.warning("jikan_failed", mal_id=mal_id, error=f"{type(exc).__name__}: {exc}"[:200])
+        _jikan_failed(mal_id, error=f"{type(exc).__name__}: {exc}"[:200])
     return out
 
 

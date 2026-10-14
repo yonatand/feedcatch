@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  useBackfillSeasonLinks,
   useCreateSeason,
   useDeleteRule,
   useDeleteSeason,
@@ -15,7 +16,7 @@ import {
   useUpdateSeason,
   useUpdateSeries,
 } from '../api/hooks';
-import type { MediaResult, MetadataProvider, Rule, SeasonIn, Series, SeriesIn } from '../api/types';
+import type { BackfillSeasonLinksResult, MediaResult, MetadataProvider, Rule, SeasonIn, Series, SeriesIn } from '../api/types';
 import { ConfirmInline } from '../components/ConfirmInline';
 import { Cover } from '../components/Cover';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
@@ -106,7 +107,19 @@ function SeriesForm({ series, onDone }: { series: Series; onDone: () => void }) 
   );
 }
 
+function backfillSummary(r: BackfillSeasonLinksResult): string {
+  const errs = typeof r.errors === 'number' ? r.errors : r.errors.length;
+  const parts = [`Linked ${r.linked} season${r.linked === 1 ? '' : 's'}`, `refreshed ${r.refreshed}`];
+  if (errs > 0) parts.push(`${errs} error${errs === 1 ? '' : 's'}`);
+  let text = parts.join(', ') + '.';
+  if (Array.isArray(r.errors) && r.errors.length > 0) text += ` ${r.errors.join('; ')}`;
+  if (r.linked === 0) text += ' Link the remaining seasons by hand in their episode cards below.';
+  return text;
+}
+
 function MetadataCard({ series, providers }: { series: Series; providers: MetadataProvider[] }) {
+  const backfill = useBackfillSeasonLinks();
+  const unlinkedSeasons = series.seasons.filter((se) => se.metadata_provider === null || se.metadata_id === null).length;
   const link = useLinkMetadata(series.id);
   const [searching, setSearching] = useState(false);
   const info = series.metadata;
@@ -136,6 +149,17 @@ function MetadataCard({ series, providers }: { series: Series; providers: Metada
               {linked ? 'Change link' : 'Link to metadata'}
             </button>
           )}
+          {linked && !searching && unlinkedSeasons > 0 ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={backfill.isPending}
+              title={`${unlinkedSeasons} season${unlinkedSeasons === 1 ? ' is' : 's are'} not linked to an episode list`}
+              onClick={() => backfill.mutate()}
+            >
+              {backfill.isPending ? 'Linking seasons…' : 'Link seasons automatically'}
+            </button>
+          ) : null}
           {linked && !searching ? (
             <ConfirmInline
               label="Unlink"
@@ -149,6 +173,15 @@ function MetadataCard({ series, providers }: { series: Series; providers: Metada
       }
     >
       <ErrorBanner error={link.error} title={linked ? `${label} update failed` : 'Could not link'} onDismiss={() => link.reset()} />
+      <ErrorBanner error={backfill.error} title="Automatic season linking failed" onDismiss={() => backfill.reset()} />
+      {backfill.data ? (
+        <Notice kind={typeof backfill.data.errors === 'number' ? (backfill.data.errors > 0 ? 'warning' : 'success') : backfill.data.errors.length > 0 ? 'warning' : 'success'}>
+          {backfillSummary(backfill.data)}{' '}
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => backfill.reset()}>
+            Dismiss
+          </button>
+        </Notice>
+      ) : null}
       {linked ? (
         <div className="media-linked">
           <Cover url={series.cover_url} alt={series.name} size="lg" />

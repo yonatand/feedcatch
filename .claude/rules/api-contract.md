@@ -165,3 +165,7 @@ See `.claude/rules/anilist.md` for the AniList endpoints (`/api/anilist/search`,
 
 ## Episodes, search, calendar, wanted (added 2026-10-14)
 See `.claude/rules/episodes.md` for `/api/seasons/{id}/episodes`, `/api/seasons/{id}/search`, `/api/calendar`, `/api/wanted`, and the new fields on Season, FeedSource, AppSettings and Dashboard.
+
+## Added 2026-10-14 (fixes)
+- `POST /api/metadata/backfill-season-links` -> `{linked: number, refreshed: number, errors: string[]}`: links unlinked seasons of linked series (season 1 = series entry; AniList SEQUEL chain for later seasons, TV formats only; TMDB by season number) and refreshes them. Also runs in a background thread at startup when needed.
+- `DELETE /api/downloads/{id}` -> 204: removes the feedcatch record only; never touches qBittorrent; the episode becomes `missing` again.

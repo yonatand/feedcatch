@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AppSettingsIn,
   AuthStatus,
+  BackfillSeasonLinksResult,
   CalendarItem,
   Dashboard,
   Download,
@@ -408,6 +409,18 @@ function invalidateDownloads(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: qk.dashboard });
 }
 
+/** DELETE /api/downloads/{id}: removes feedcatch's record only; the torrent stays in qBittorrent. */
+export function useDeleteDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<void>(`/api/downloads/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      invalidateEpisodeViews(qc);
+      void qc.invalidateQueries({ queryKey: ['entry'] });
+    },
+  });
+}
+
 export function useRetryDownload() {
   const qc = useQueryClient();
   return useMutation({
@@ -542,6 +555,18 @@ export function useLinkMetadata(seriesId: number) {
       qc.setQueryData(qk.seriesOne(data.id), data);
       invalidateSeries(qc);
       void qc.invalidateQueries({ queryKey: ['episodes'] });
+    },
+  });
+}
+
+/** POST /api/metadata/backfill-season-links: links unlinked seasons of linked series where it can. */
+export function useBackfillSeasonLinks() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<BackfillSeasonLinksResult>('/api/metadata/backfill-season-links', { method: 'POST' }),
+    onSuccess: () => {
+      invalidateSeries(qc);
+      invalidateEpisodeViews(qc);
     },
   });
 }

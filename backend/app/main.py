@@ -38,6 +38,7 @@ from app.db import SessionLocal, configure_engine, run_migrations
 from app.logging_setup import configure_logging
 from app.services import scheduler, settings_store
 from app.services.auth import LoginRateLimiter
+from app.services.metadata import backfill
 from app.services.paths import PathError
 from app.services.qbit import QbitError
 from app.services.seed import seed_defaults
@@ -87,6 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings_store.ensure_defaults(db)
         db.commit()
         seed_defaults(db, s)
+    backfill_thread = backfill.run_in_background(s)  # links seasons left unlinked by the 0002 -> 0003 upgrade
     if s.APP_SCHEDULER_ENABLED:
         scheduler.start(s)
     log.info("startup", version=__version__, auth_disabled=s.APP_AUTH_DISABLED, scheduler=s.APP_SCHEDULER_ENABLED)
@@ -94,6 +96,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         scheduler.shutdown(wait=True)
+        if backfill_thread is not None:
+            backfill_thread.join(timeout=5)
         log.info("shutdown")
 
 

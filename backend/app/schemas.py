@@ -844,6 +844,12 @@ class RetriedOut(BaseModel):
     retried: int
 
 
+class BackfillSeasonLinksOut(BaseModel):
+    linked: int
+    refreshed: int
+    errors: list[str]
+
+
 class UpdatedOut(BaseModel):
     updated: int
 

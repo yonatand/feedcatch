@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useDownloads, useRefreshStatus, useRetryDownload, useRetryFailed, useSeriesList } from '../api/hooks';
 import type { DownloadStatus } from '../api/types';
-import { DownloadsTable } from '../components/DownloadsTable';
+import { DeleteDownloadButton, DownloadsTable } from '../components/DownloadsTable';
 import { ErrorBanner, Notice } from '../components/ErrorBanner';
 import { Pagination } from '../components/Pagination';
 import { LoadingBlock, Spinner } from '../components/Spinner';
 import { PageHeader } from '../components/Table';
+import { seasonEpisode } from '../lib/format';
 
 const STATUSES: DownloadStatus[] = ['pending', 'submitted', 'failed', 'exists', 'path_mismatch'];
 const LIMIT = 50;
@@ -37,7 +38,7 @@ export default function Downloads() {
     <>
       <PageHeader
         title="Downloads"
-        subtitle="Torrents sent (or queued) to qBittorrent. qBittorrent owns them after submission; this app never pauses, moves or deletes torrents. Refreshes every 15 s."
+        subtitle="Torrents sent (or queued) to qBittorrent. qBittorrent owns them after submission; this app never pauses, moves or deletes torrents (deleting a row here only removes feedcatch's record). Refreshes every 15 s."
         actions={
           <>
             <button
@@ -101,20 +102,28 @@ export default function Downloads() {
           <DownloadsTable
             items={list.data?.items ?? []}
             emptyText={status || seriesId !== undefined ? 'No downloads match these filters.' : 'Nothing has been sent to qBittorrent yet.'}
-            renderActions={(d) =>
-              d.status === 'failed' || d.status === 'pending' ? (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={retry.isPending && retry.variables === d.id}
-                  onClick={() => retry.mutate(d.id)}
-                >
-                  {retry.isPending && retry.variables === d.id ? 'Retrying…' : 'Retry now'}
-                </button>
-              ) : (
-                <span className="muted small">—</span>
-              )
-            }
+            renderActions={(d) => {
+              const what = `${d.series_name} ${seasonEpisode(d.season_number, d.episode_number)}`;
+              return (
+                <div className="actions">
+                  {d.status === 'failed' || d.status === 'pending' ? (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={retry.isPending && retry.variables === d.id}
+                      onClick={() => retry.mutate(d.id)}
+                    >
+                      {retry.isPending && retry.variables === d.id ? 'Retrying…' : 'Retry now'}
+                    </button>
+                  ) : null}
+                  <DeleteDownloadButton
+                    id={d.id}
+                    what={what}
+                    onDeleted={() => setMessage(`Deleted the download record for ${what}. The torrent was left in qBittorrent.`)}
+                  />
+                </div>
+              );
+            }}
           />
           <Pagination total={list.data?.total ?? 0} limit={LIMIT} offset={offset} disabled={list.isFetching} onChange={(o) => update({ offset: o === 0 ? undefined : String(o) })} />
         </>

@@ -1048,3 +1048,322 @@ def test_jikan_can_be_disabled(db: Session, settings: Settings, respx_mock: resp
     off = Settings(APP_DATA_DIR=settings.APP_DATA_DIR, JIKAN_ENABLED=False)
     assert len(metadata.refresh_season(db, season, off)) == 170
     assert jikan.call_count == 0
+
+
+# ---------------------------------------------------------------- fixes 2026-10-14: Jikan backoff
+
+DETAIL_97940 = json.loads((FIXTURES / "anilist_detail_97940.json").read_text(encoding="utf-8"))
+
+
+def test_jikan_timeouts_and_backoff(respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:
+    from structlog.testing import capture_logs
+
+    clock = [1000.0]
+    monkeypatch.setattr(anilist, "_jikan_clock", lambda: clock[0])
+    route = respx_mock.get(url__startswith=JIKAN_MAL).mock(side_effect=httpx.ConnectError("Network is unreachable"))
+    assert anilist.fetch_jikan_episodes(34572) == {}
+    assert route.call_count == 1
+    timeout = route.calls[0].request.extensions["timeout"]
+    assert timeout["connect"] == 3.0 and timeout["read"] == 8.0
+    assert anilist.jikan_backoff_until == 1000.0 + 6 * 3600
+
+    with capture_logs() as logs:
+        clock[0] += 3600
+        assert anilist.fetch_jikan_episodes(34572) == {}
+        clock[0] += 3600
+        assert anilist.fetch_jikan_episodes(34572) == {}
+    assert route.call_count == 1  # skipped silently while in backoff
+    assert [e["event"] for e in logs] == ["jikan_backoff_skip"]  # one info line per window
+    assert logs[0]["log_level"] == "info"
+
+    clock[0] = 1000.0 + 6 * 3600 + 1  # window over: tried again; an HTTP error also starts a new window
+    route.mock(return_value=httpx.Response(503))
+    assert anilist.fetch_jikan_episodes(34572) == {}
+    assert route.call_count == 2 and anilist.jikan_backoff_until == clock[0] + 6 * 3600
+    with capture_logs() as logs:
+        anilist.fetch_jikan_episodes(34572)
+    assert route.call_count == 2 and [e["event"] for e in logs] == ["jikan_backoff_skip"]
+
+    anilist.reset_jikan_backoff()  # what a restart does
+    route.mock(
+        return_value=httpx.Response(
+            200, json={"pagination": {"has_next_page": False}, "data": [{"mal_id": 1, "title": "Asta and Yuno"}]}
+        )
+    )
+    assert anilist.fetch_jikan_episodes(34572) == {1: ("Asta and Yuno", None)}
+    assert route.call_count == 3
+
+
+def test_refresh_skips_jikan_during_backoff(db: Session, settings: Settings, respx_mock: respx.MockRouter) -> None:
+    _anilist_episodes_route(respx_mock)
+    jikan = respx_mock.get(url__startswith=JIKAN_MAL).mock(side_effect=httpx.ConnectTimeout("slow"))
+    _, season = _bc(db)
+    season.metadata_provider, season.metadata_id = "anilist", "97940"
+    db.commit()
+    assert len(metadata.refresh_season(db, season, settings)) == 170
+    anilist.clear_cache()
+    assert len(metadata.refresh_season(db, season, settings)) == 170
+    assert jikan.call_count == 1  # the second refresh did not wait for Jikan again
+
+
+# ---------------------------------------------------------------- fixes 2026-10-14: season link backfill
+
+
+def _anilist_detail(media_id: int, sequel: int | None, fmt: str = "TV") -> dict[str, Any]:
+    data = json.loads(json.dumps(DETAIL_97940))
+    media = data["data"]["Media"]
+    media["id"] = media_id
+    edges = [e for e in media["relations"]["edges"] if e["relationType"] != "SEQUEL"]
+    if sequel is not None:
+        node = {
+            "id": sequel,
+            "title": {"romaji": f"S {sequel}", "english": None},
+            "format": fmt,
+            "episodes": 12,
+            "seasonYear": 2025,
+            "status": "RELEASING",
+        }
+        edges.append({"relationType": "SEQUEL", "node": node})
+    media["relations"]["edges"] = edges
+    return data
+
+
+def _small_episodes(media_id: int) -> dict[str, Any]:
+    nodes = [{"episode": 1, "airingAt": 1594113900}, {"episode": 2, "airingAt": 1594718700}]
+    media = {
+        "id": media_id,
+        "episodes": 2,
+        "idMal": None,
+        "status": "FINISHED",
+        "nextAiringEpisode": None,
+        "airingSchedule": {"pageInfo": {"hasNextPage": False}, "nodes": nodes},
+        "streamingEpisodes": [],
+    }
+    return {"data": {"Media": media}}
+
+
+def _anilist_router(
+    router: respx.MockRouter, details: dict[int, dict[str, Any]], fail_episodes: frozenset[int] = frozenset()
+) -> respx.Route:
+    """Detail queries answered from `details` (others 404); episode queries: real 97940 pages or a small list."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        media_id = int(body["variables"]["id"])
+        if "airingSchedule" in body["query"]:
+            if media_id in fail_episodes:
+                return httpx.Response(500)
+            if media_id == 97940:
+                return httpx.Response(200, json={1: EPISODES_97940, 2: _episodes_page2()}[body["variables"]["page"]])
+            return httpx.Response(200, json=_small_episodes(media_id))
+        if media_id not in details:
+            return httpx.Response(404, json={"errors": [{"message": "Not Found.", "status": 404}], "data": None})
+        return httpx.Response(200, json=details[media_id])
+
+    return router.post(ANILIST_URL).mock(side_effect=handler)
+
+
+def _detail_calls(route: respx.Route) -> list[int]:
+    out = []
+    for c in route.calls:
+        body = json.loads(c.request.content)
+        if "airingSchedule" not in body["query"]:
+            out.append(int(body["variables"]["id"]))
+    return out
+
+
+def _episode_count(db: Session, season: Season) -> int:
+    return len(list(db.scalars(select(Episode.id).where(Episode.season_id == season.id))))
+
+
+def test_backfill_anilist_sequel_chain(db: Session, settings: Settings, respx_mock: respx.MockRouter) -> None:
+    from app.services.metadata import backfill
+
+    respx_mock.get(url__startswith=JIKAN_MAL).mock(return_value=httpx.Response(500))
+    details = {
+        97940: _anilist_detail(97940, 195604),
+        195604: _anilist_detail(195604, 300001),
+        300001: _anilist_detail(300001, None),
+    }
+    route = _anilist_router(respx_mock, details)
+    series = Series(name="Black Clover", aliases=[], metadata_provider="anilist", metadata_id="97940")
+    s1 = Season(series=series, season_number=1)
+    s2 = Season(series=series, season_number=2)
+    s3 = Season(series=series, season_number=3)
+    s5 = Season(series=series, season_number=5)  # beyond the chain: stays unlinked
+    unlinked_series = Series(name="No link", aliases=[])
+    db.add_all([series, s1, s2, s3, s5, unlinked_series, Season(series=unlinked_series, season_number=1)])
+    db.commit()
+
+    out = backfill.backfill_season_links(db, settings)
+    assert out == {"linked": 3, "refreshed": 3, "errors": []}
+    got = {s.season_number: (s.metadata_provider, s.metadata_id) for s in series.seasons}
+    assert got == {1: ("anilist", "97940"), 2: ("anilist", "195604"), 3: ("anilist", "300001"), 5: (None, None)}
+    assert _detail_calls(route) == [97940, 195604, 300001]
+    assert _episode_count(db, s1) == 170 and _episode_count(db, s3) == 2
+    assert s2.metadata_refreshed_at is not None
+
+    # idempotent: linked seasons are never relinked or refreshed again
+    s2.metadata_id = "12345"
+    db.commit()
+    anilist.clear_cache()
+    before = len(route.calls)
+    out = backfill.backfill_season_links(db, settings)
+    assert out == {"linked": 0, "refreshed": 0, "errors": []}
+    assert s2.metadata_id == "12345" and s5.metadata_provider is None
+    assert all("airingSchedule" not in json.loads(c.request.content)["query"] for c in list(route.calls)[before:])
+    assert _detail_calls(route)[3:] == [97940, 195604, 300001]  # season 5 still unlinked: chain walked again
+
+
+def test_backfill_movie_sequel_passed_through_and_errors(
+    db: Session, settings: Settings, respx_mock: respx.MockRouter
+) -> None:
+    from app.services.metadata import backfill
+
+    # 500 -SEQUEL-> 501 (MOVIE, passed through) -SEQUEL-> 502 (TV = season 2) -SEQUEL-> 503 (OVA, chain ends)
+    details = {
+        500: _anilist_detail(500, 501, fmt="MOVIE"),
+        501: _anilist_detail(501, 502, fmt="TV"),
+        502: _anilist_detail(502, 503, fmt="OVA"),
+        503: _anilist_detail(503, None),
+        600: _anilist_detail(600, 601, fmt="MOVIE"),
+        601: _anilist_detail(601, None),
+    }
+    route = _anilist_router(respx_mock, details, fail_episodes=frozenset({502, 404404}))
+    series = Series(name="Movie sequel", aliases=[], metadata_provider="anilist", metadata_id="500")
+    s1 = Season(series=series, season_number=1, metadata_provider="anilist", metadata_id="500")  # already linked
+    s2 = Season(series=series, season_number=2)
+    s3 = Season(series=series, season_number=3)  # only an OVA after season 2: stays unlinked
+    only_movie = Series(name="Only movie", aliases=[], metadata_provider="anilist", metadata_id="600")
+    m1 = Season(series=only_movie, season_number=1, metadata_provider="anilist", metadata_id="600")
+    m2 = Season(series=only_movie, season_number=2)  # the movie sequel is never season 2
+    gone = Series(name="Gone", aliases=[], metadata_provider="anilist", metadata_id="404404")
+    g1 = Season(series=gone, season_number=1)
+    g2 = Season(series=gone, season_number=2)
+    db.add_all([series, s1, s2, s3, only_movie, m1, m2, gone, g1, g2])
+    db.commit()
+    out = backfill.backfill_season_links(db, settings)
+    assert s2.metadata_id == "502" and s1.metadata_refreshed_at is None  # TV entry behind the movie; s1 untouched
+    assert s3.metadata_provider is None and m2.metadata_provider is None
+    assert g1.metadata_id == "404404" and g2.metadata_provider is None  # season 1 linked although the chain failed
+    assert _detail_calls(route)[:4] == [500, 501, 502, 503]
+    assert out["linked"] == 2 and out["refreshed"] == 0
+    assert len(out["errors"]) == 3, out["errors"]
+    assert any(e.startswith("'Gone': ") and "not found" in e for e in out["errors"])
+    assert any("'Movie sequel' season 2: episode metadata could not be fetched" in e for e in out["errors"])
+    failed = db.scalars(select(ActivityLog).where(ActivityLog.event_type == "metadata_refresh_failed")).all()
+    assert len(failed) == 2
+
+
+def test_backfill_tmdb(db: Session, settings: Settings, respx_mock: respx.MockRouter) -> None:
+    from app.services.metadata import backfill
+
+    routes = _tmdb_routes(respx_mock)
+    series = Series(name="Game of Thrones", aliases=[], metadata_provider="tmdb", metadata_id="1399")
+    seasons = {n: Season(series=series, season_number=n) for n in (1, 2, 7)}
+    db.add_all([series, *seasons.values()])
+    db.commit()
+    out = backfill.backfill_season_links(db, settings)  # no key: season 1 linked, upstream never asked
+    assert out["linked"] == 1 and out["refreshed"] == 0 and len(out["errors"]) == 2, out
+    assert routes["tv"].call_count == 0
+    settings_store.set(db, settings_store.TMDB_API_KEY, crypto.encrypt("k" * 32, settings))
+    db.commit()
+    out = backfill.backfill_season_links(db, settings)
+    assert out["linked"] == 1  # season 2 exists upstream, 7 does not
+    assert len(out["errors"]) == 1 and "season 2" in out["errors"][0]  # season/2 is a 404 in the fixture routes
+    assert {n: s.metadata_id for n, s in seasons.items()} == {1: "1399", 2: "1399", 7: None}
+
+
+def test_api_backfill_endpoint(api: tuple[TestClient, Session], respx_mock: respx.MockRouter) -> None:
+    client, db = api
+    respx_mock.get(url__startswith=JIKAN_MAL).mock(return_value=httpx.Response(500))
+    _anilist_router(respx_mock, {97940: _anilist_detail(97940, 195604), 195604: _anilist_detail(195604, None)})
+    body = {"name": "Black Clover", "aliases": [], "seasons": [{"season_number": 1}, {"season_number": 2}]}
+    r = client.post("/api/series", json=body)
+    assert r.status_code == 201
+    sid = r.json()["id"]
+    series = db.get(Series, sid)
+    assert series is not None
+    series.metadata_provider, series.metadata_id = "anilist", "97940"  # an upgraded DB: series link only
+    db.commit()
+    r = client.post("/api/metadata/backfill-season-links")
+    assert r.status_code == 200
+    assert r.json() == {"linked": 2, "refreshed": 2, "errors": []}
+    seasons = {x["season_number"]: x for x in client.get(f"/api/series/{sid}").json()["seasons"]}
+    assert seasons[1]["metadata_id"] == "97940" and seasons[2]["metadata_id"] == "195604"
+    assert seasons[1]["episode_count"] == 170 and seasons[2]["episode_count"] == 2
+    assert client.post("/api/metadata/backfill-season-links").json() == {"linked": 0, "refreshed": 0, "errors": []}
+
+
+def test_delete_download_makes_episode_missing(api: tuple[TestClient, Session]) -> None:
+    client, db = api
+    _, sid = _api_bc(client)
+    season = db.get(Season, sid)
+    assert season is not None
+    _eps(db, season, {1: NOW - timedelta(days=7)})
+    d = _download(db, season, 1)
+    item = client.get(f"/api/seasons/{sid}/episodes").json()["items"][0]
+    assert item["status"] == "downloading" and item["download"]["id"] == d.id
+    assert client.delete(f"/api/downloads/{d.id}").status_code == 204
+    item = client.get(f"/api/seasons/{sid}/episodes").json()["items"][0]
+    assert item["status"] == "missing" and item["download"] is None
+
+
+def test_startup_backfill_after_0002_upgrade(respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A populated 0002 DB (series had anilist_id 97940, seasons 1 and 2) is upgraded at startup; the background
+    backfill then links season 1 to 97940 and season 2 to its SEQUEL 195604 (suggested_season_number 2)."""
+    from alembic import command
+    from alembic.config import Config
+
+    from app import config
+    from app.db import ALEMBIC_DIR, ALEMBIC_INI
+    from app.services.metadata import backfill
+
+    respx_mock.get(url__startswith=JIKAN_MAL).mock(return_value=httpx.Response(500))
+    _anilist_router(respx_mock, {97940: DETAIL_97940, 195604: _anilist_detail(195604, None)})
+    monkeypatch.setenv("APP_AUTH_DISABLED", "true")
+    config.get_settings.cache_clear()
+    s = config.get_settings()
+    s.ensure_data_dir()
+    cfg = Config(str(ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+    cfg.set_main_option("sqlalchemy.url", s.database_url)
+    cfg.attributes["configure_logger"] = False
+    command.upgrade(cfg, "0002_anilist")
+    engine = create_engine(s.database_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO series (id, created_at, name, aliases_json, monitored, season_folder_format, anilist_id,"
+                " anilist_json) VALUES (1, '2026-01-01', 'Black Clover', '[]', 1, 'Season {season:02d}', 97940, '{}')"
+            )
+        )
+        for n in (1, 2):
+            conn.execute(
+                text(
+                    "INSERT INTO seasons (id, created_at, series_id, season_number, monitored)"
+                    " VALUES (:n, '2026-01-01', 1, :n, 1)"
+                ),
+                {"n": n},
+            )
+    engine.dispose()
+
+    threads: list[Any] = []
+    real = backfill.run_in_background
+
+    def spy(settings: Settings) -> Any:
+        t = real(settings)
+        threads.append(t)
+        return t
+
+    monkeypatch.setattr(backfill, "run_in_background", spy)
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        assert len(threads) == 1 and threads[0] is not None
+        threads[0].join(timeout=30)
+        assert not threads[0].is_alive()
+        seasons = {x["season_number"]: x for x in client.get("/api/series/1").json()["seasons"]}
+    assert (seasons[1]["metadata_provider"], seasons[1]["metadata_id"]) == ("anilist", "97940")
+    assert (seasons[2]["metadata_provider"], seasons[2]["metadata_id"]) == ("anilist", "195604")
+    assert seasons[1]["episode_count"] == 170 and seasons[2]["episode_count"] == 2

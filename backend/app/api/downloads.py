@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -96,3 +96,33 @@ def retry(download_id: int, db: Session = Depends(get_db), settings: Settings = 
     dispatcher.submit(db, d, settings)
     db.commit()
     return DownloadOut.from_model(d)
+
+
+@router.delete("/{download_id}", status_code=204)
+def delete_download(download_id: int, db: Session = Depends(get_db)) -> Response:
+    """Forget feedcatch's record only. The torrent stays in qBittorrent (safety invariant 6: no qBittorrent call)."""
+    d = get_or_404(db, Download, download_id, "download")
+    title = d.entry.title if d.entry is not None else None
+    entry_id = d.entry_id
+    details = {
+        "download_id": d.id,
+        "entry_id": d.entry_id,
+        "entry_title": title,
+        "infohash": d.infohash,
+        "save_path": d.save_path,
+        "series_id": d.series_id,
+        "season_id": d.season_id,
+        "episode_number": d.episode_number,
+        "status": d.status,
+    }
+    db.delete(d)
+    activity.log_event(
+        db,
+        "info",
+        "download_deleted",
+        f"Download #{download_id} '{title or '?'}' deleted (record only; the torrent stays in qBittorrent)",
+        details=details,
+        entry_id=entry_id,
+    )
+    db.commit()
+    return Response(status_code=204)

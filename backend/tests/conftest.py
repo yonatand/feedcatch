@@ -87,6 +87,9 @@ def fake_resolve(host: str, port: int) -> list[str]:
 def _no_real_network_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fake DNS for SSRF checks and no sleeping in the dispatcher."""
     from app.services import dispatcher, ssrf
+    from app.services.metadata import anilist
+
+    anilist.reset_jikan_backoff()  # module-level Jikan backoff must not leak between tests
 
     monkeypatch.setattr(ssrf, "_resolve", fake_resolve)
     monkeypatch.setattr(dispatcher, "POST_ADD_SETTLE_SECONDS", 0.0)

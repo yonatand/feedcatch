@@ -583,6 +583,9 @@ a.stat:hover { text-decoration: none; border-color: var(--primary); }
   padding: 2px 4px;
 }
 .confirm-msg { font-size: 0.85em; padding: 0 4px; }
+.confirm-inline.confirm-wrap,
+.table .confirm-inline.confirm-wrap { flex-wrap: wrap; white-space: normal; max-width: 340px; }
+.table .actions:has(.confirm-wrap) { flex-wrap: wrap; }
 
 /* ---------- forms ---------- */
 input[type='text'],
@@ -914,3 +917,15 @@ pre.json {
 @media (max-width: 800px) {
   .onboarding { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ---------- unlinked season call-to-action ---------- */
+.cta-card {
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 10px 0;
+}
+.cta-card h3 { margin: 0 0 4px; font-size: 1.05em; }
+.cta-card > p { margin: 0 0 12px; }
+.cta-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }

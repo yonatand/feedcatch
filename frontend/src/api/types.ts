@@ -512,3 +512,6 @@ export type SearchAllSeason = {
 };
 
 export type SearchAllResult = { seasons: SearchAllSeason[] };
+
+/** POST /api/metadata/backfill-season-links. `errors` is a count or a list of messages. */
+export type BackfillSeasonLinksResult = { linked: number; refreshed: number; errors: number | string[] };

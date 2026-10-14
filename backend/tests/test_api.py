@@ -414,6 +414,35 @@ def test_entries_and_grab(client: TestClient, respx_mock: respx.MockRouter) -> N
     assert dash["counts"]["series_monitored"] == 1 and len(dash["recent_downloads"]) == 1
 
 
+def test_delete_download_keeps_torrent_in_qbit(client: TestClient, respx_mock: respx.MockRouter) -> None:
+    series, _feed, fake = _bc_setup(client, respx_mock)
+    entry = client.get("/api/entries", params={"q": "black clover season 2"}).json()["items"][0]
+    grab = {"season_id": series["seasons"][0]["id"], "episode_number": 1, "force": False, "confirm": True}
+    download = client.post(f"/api/entries/{entry['id']}/grab", json=grab).json()
+    calls_before = len(respx_mock.calls)
+
+    r = client.delete(f"/api/downloads/{download['id']}")
+    assert r.status_code == 204 and r.content == b""
+    assert len(respx_mock.calls) == calls_before  # qBittorrent is never contacted (invariant 6)
+    assert not any("/torrents/delete" in str(c.request.url) for c in respx_mock.calls)
+    assert len(fake.torrents) == 1  # the torrent stays
+    assert client.get(f"/api/downloads/{download['id']}").status_code == 404
+    assert client.get("/api/downloads").json()["total"] == 0
+    assert client.get(f"/api/entries/{entry['id']}").status_code == 200  # the entry is kept
+    ev = client.get("/api/activity", params={"event_type": "download_deleted"}).json()["items"]
+    assert len(ev) == 1 and ev[0]["level"] == "info"
+    d = ev[0]["details"]
+    assert d["entry_title"].startswith("[DKB] Black Clover") and d["save_path"] == EXPECTED_BC_S2
+    assert d["infohash"] == download["infohash"] and d["download_id"] == download["id"]
+
+    assert client.delete(f"/api/downloads/{download['id']}").status_code == 404
+    assert client.delete("/api/downloads/999999").status_code == 404
+    # the episode can be grabbed again (qBittorrent already has it -> "exists", no second add)
+    r = client.post(f"/api/entries/{entry['id']}/grab", json=grab)
+    assert r.status_code == 201 and r.json()["status"] == "exists"
+    assert fake.add_route.call_count == 1
+
+
 def test_grab_nzb_only_entry_400(client: TestClient, respx_mock: respx.MockRouter) -> None:
     series = _bc_demo(client)
     mock_feed(respx_mock, feed_with(make_item("[DKB] Black Clover Season 2 - 02 [1080p]", 1002, magnet=False)))

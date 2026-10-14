@@ -390,6 +390,8 @@ and the Match Inspector shows the reason.
   a table of checks with pass/fail and a detail. Examples: `group: DKB`,
   `season: absolute 171 -> season 2 episode 1`, `season: ambiguous: no absolute range mapping for episode 171`.
   **Re-evaluate** runs the rules again without sending anything.
+- **Downloads** can be deleted (inline confirm): this removes feedcatch's record only, the torrent stays in qBittorrent, and the episode
+  shows as missing again so it can be re-grabbed.
 - **Downloads** shows the submission status: `pending` (waiting for a retry), `submitted`, `exists` (already in
   qBittorrent, not added again), `path_mismatch` (qBittorrent reports a different save path) or `failed`. It also shows
   the qBittorrent state and progress, and offers retry, retry all failed, and refresh status.
@@ -452,6 +454,7 @@ added to qBittorrent.
 | Search releases: no feed has a search URL template | Add a search URL template with `{query}` to at least one enabled feed. The AnimeTosho and Nyaa presets include one. |
 | Search releases finds nothing | Look at the queries shown in the result. The site may name the show differently: add that name as an alias, or type your own query (for example without ` S02`, or with the absolute episode number). Results are filtered by your rules, so if your release group isn't among the search results, nothing matches. A search feed also returns only its newest hits (about 75 on AnimeTosho). |
 | Episodes list empty | The season isn't linked to a metadata entry. On the series page, link the season (its AniList entry, or the TMDB show) and click **Refresh metadata**. You can also add episodes by hand. |
+| Episodes list empty after upgrading | Seasons created before the metadata feature are linked automatically at startup (season 1 to the series entry, later seasons by following AniList sequels). If a season is still unlinked, the Episodes card offers a search box, and the series page has **Link seasons automatically**. |
 | Forgot the UI password | Set `APP_PASSWORD=<new>` in `.env` and run `docker compose up -d`. While it is set, it is the password. |
 | Container exits: `/data is not writable` | See [Data directory permissions](#data-directory-permissions-linux-hosts). |
 
